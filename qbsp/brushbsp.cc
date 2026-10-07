@@ -424,13 +424,15 @@ static twosided<bspbrush_t::ptr> SplitBrush(
                 d_back = d;
         }
     }
-    if (d_front < 0.1) // PLANESIDE_EPSILON)
-    { // only on back
+    // the brush is only kept whole when it pokes no further than PLANESIDE_EPSILON past the split.
+    // a larger tolerance here (qbsp3 used 0.1) drops material: the node volume is still split,
+    // so the child that loses its sliver of this brush becomes empty there, which can open a
+    // crack through a wall when the brush fragment is itself thin.
+    if (d_front < PLANESIDE_EPSILON) { // only on back
         result.back = std::move(brush);
         return result;
     }
-    if (d_back > -0.1) // PLANESIDE_EPSILON)
-    { // only on front
+    if (d_back > -PLANESIDE_EPSILON) { // only on front
         result.front = std::move(brush);
         return result;
     }
@@ -442,7 +444,10 @@ static twosided<bspbrush_t::ptr> SplitBrush(
         if (!w) {
             break;
         }
-        w = w->clip_back(face.get_plane());
+        // clip with the same tolerance: with the default ON_EPSILON (0.1), a midwinding that
+        // lies less than 0.1 behind one of a thin brush's faces is clipped away entirely, and
+        // the whole brush is then put on one side below, although it really straddles the split.
+        w = w->clip_back(face.get_plane(), PLANESIDE_EPSILON);
     }
 
     if (!w || WindingIsTiny(*w, 0.02)) { // the brush isn't really split
