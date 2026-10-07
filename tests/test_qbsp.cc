@@ -3116,6 +3116,40 @@ TEST(testmapsQ1, dentdata)
 )");
 }
 
+TEST(testmapsQ1, cliphull2ThinFragmentSplit)
+{
+    // a hull 2 brush fragment that is thinner than 0.1 on one side of a split must still be
+    // split, not kept whole on the other side, or the child it is missing from becomes empty.
+    // -tjunc none: with the default (mwt), one of the small brushes' hull 0 faces gets a
+    // 0.035-unit spike (a vertex visited twice), which CheckBsp reports; that is unrelated to
+    // the clip hulls tested here, which T-junction fixing does not touch.
+    for (const std::vector<std::string> &extra_args : {std::vector<std::string>{"-leaktest", "-tjunc", "none"},
+             std::vector<std::string>{"-leaktest", "-tjunc", "none", "-forcegoodtree"}}) {
+        SCOPED_TRACE(extra_args.back());
+
+        // -leaktest throws if any hull leaks
+        const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_cliphull2_thin_fragment_split.map", extra_args);
+
+        // points in the middle of the hall wall where the hull 2 leak crossed it: the first is
+        // the crack left by the 0.1 early-out, the second the one left by the 0.1 midwinding clip
+        // (hull 2 coordinates, i.e. player origin; both are deep inside the expanded wall)
+        const qvec3d wall_crossing_1{94.281089, 709.496103, 533.12};
+        const qvec3d wall_crossing_2{142.074073, 738.287188, 533.105};
+        EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 2, &bsp.dmodels[0], wall_crossing_1));
+        EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 2, &bsp.dmodels[0], wall_crossing_2));
+
+        // the same wall in the point hull, 16 units deep in the 32-unit wall
+        const qvec3d wall_middle{94.281089, 709.496103, 533.12};
+        EXPECT_EQ(CONTENTS_SOLID, BSP_FindLeafAtPoint(&bsp, &bsp.dmodels[0], wall_middle)->contents);
+
+        // the light is inside the hall and stays reachable in every hull
+        const qvec3d light_origin{-105.055035, -702.129458, -4.023305};
+        EXPECT_EQ(CONTENTS_EMPTY, BSP_FindLeafAtPoint(&bsp, &bsp.dmodels[0], light_origin)->contents);
+        EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 1, &bsp.dmodels[0], light_origin));
+        EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 2, &bsp.dmodels[0], light_origin));
+    }
+}
+
 TEST(testmapsQ1, leaktest)
 {
     auto l = []() {
