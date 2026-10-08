@@ -28,3 +28,6 @@ CMakeSettings.json
 sphinx-venv
 **/__pycache__
 *-env
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
