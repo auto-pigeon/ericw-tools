@@ -1,3 +1,115 @@
+## Auto-Pigeon fork of ericw-tools
+
+This repository is the **Auto-Pigeon fork** of [ericwa/ericw-tools](https://github.com/ericwa/ericw-tools).
+It follows upstream `main` and adds one compiler change, which upstream has not reviewed or accepted:
+`qbsp`'s `SplitBrush` splits thin brush fragments with `PLANESIDE_EPSILON` instead of `0.1`, closing a
+clip-hull leak through valid thin geometry (regression test `testmapsQ1.cliphull2ThinFragmentSplit`).
+The branch `fix/thin-brush-splits` holds exactly that change on top of upstream, for an upstream pull request.
+Everything below this section is upstream's own README.
+
+### Downloads
+
+Builds are on the [Releases page](https://github.com/auto-pigeon/ericw-tools/releases). Every push to `main`
+that passes its gates publishes an **unsigned development prerelease** named `auto-pigeon-ericw-v1.<N>`,
+where `<N>` is the number of commits in `main`.
+
+| Target | Asset | Status |
+| --- | --- | --- |
+| Linux x86-64 | `auto-pigeon-ericw-tools-1.<N>-linux-amd64.zip` | required: no release without it |
+| Windows x86-64 | `auto-pigeon-ericw-tools-1.<N>-windows-amd64.zip` | required: no release without it |
+| macOS Intel | `auto-pigeon-ericw-tools-1.<N>-macos-amd64.zip` | published only when it passed on a native Intel runner |
+| macOS Apple silicon | `auto-pigeon-ericw-tools-1.<N>-macos-arm64.zip` | candidate; published only when it passed natively |
+| Source | `auto-pigeon-ericw-tools-1.<N>-source.tar.gz` | the commit with all submodules and the pinned GoogleTest |
+
+There is no Windows or Linux arm64 build. A target missing from a release was not built or did not pass;
+the release notes and `release-manifest.json` say which and why. Each release also carries `SHA256SUMS`.
+
+Each ZIP unpacks to one folder:
+
+```text
+auto-pigeon-ericw-tools-1.<N>-<target>/
+  bin/            qbsp vis light bspinfo bsputil maputil, with the Embree, oneTBB and (Windows) Visual C++
+                  runtime libraries they load
+  licenses/       the GPL texts and every shipped library's notices
+  README.md       requirements and usage for that target
+  build-info.json commit, upstream base, compiler, options, dependency versions and digests
+  MANIFEST.json   every file with its size, mode and SHA-256
+```
+
+Requirements, measured per build and written into that archive's `README.md` and `build-info.json`:
+Linux needs the glibc and libstdc++ of Ubuntu 22.04 or newer; Windows needs 64-bit Windows 10 or newer and
+nothing installed; macOS states its minimum version from the shipped files. Nothing is installed system-wide
+and nothing downloads or updates itself.
+
+### Verify, unpack, run
+
+Linux and macOS (`shasum -a 256 -c` on macOS):
+
+```sh
+cd "$HOME/Downloads"
+sha256sum -c SHA256SUMS --ignore-missing
+mkdir -p "$HOME/tools" && unzip auto-pigeon-ericw-tools-1.<N>-linux-amd64.zip -d "$HOME/tools"
+T="$HOME/tools/auto-pigeon-ericw-tools-1.<N>-linux-amd64/bin"
+"$T/qbsp" "$HOME/my maps/room.map"       # writes room.bsp and room.prt beside the map
+"$T/vis" "$HOME/my maps/room.bsp"        # full VIS; -fast is the quick, lower-quality mode
+"$T/light" "$HOME/my maps/room.bsp"
+"$T/qbsp" -leaktest "$HOME/my maps/room.map"   # exit status 1 and a .pts file when the map leaks
+```
+
+Windows (PowerShell):
+
+```powershell
+cd "$env:USERPROFILE\Downloads"
+(Get-FileHash .\auto-pigeon-ericw-tools-1.<N>-windows-amd64.zip -Algorithm SHA256).Hash.ToLower()   # compare with SHA256SUMS
+Expand-Archive .\auto-pigeon-ericw-tools-1.<N>-windows-amd64.zip -DestinationPath "C:\Tools"
+$T = "C:\Tools\auto-pigeon-ericw-tools-1.<N>-windows-amd64\bin"
+& "$T\qbsp.exe" "C:\My Maps\room.map"
+& "$T\vis.exe" "C:\My Maps\room.bsp"
+& "$T\light.exe" "C:\My Maps\room.bsp"
+```
+
+Without `-leaktest`, `qbsp` exits 0 on a leaking map; the leak is the `.pts` file and the missing `.prt`.
+Every program prints `ericw-tools <upstream version>+auto-pigeon.1.<N>` in its first lines. A SHA-256 shows
+the download is intact; these builds are not signed.
+
+### Use in the Auto-Pigeon Companion
+
+The Companion runs compilers you installed; it does not download or bundle these. In the Companion open
+**Profiles → New profile → A build tool**, start from the built-in ericw-tools profile, set each program's
+*File inside its folder* to `bin/qbsp`, `bin/vis`, `bin/light`, `bin/bspinfo`, `bin/bsputil`, install and approve
+it, then under *Where these programs are on this machine* give the unpacked
+`auto-pigeon-ericw-tools-1.<N>-<target>` folder and press **Use this folder**. Keep an older toolchain in its own
+folder and profile; do not overwrite one release with another.
+
+### How a release is made, and rebuilding one
+
+`.github/workflows/auto-pigeon-release.yml` is the only build and release path. It freezes the commit and
+version once, builds and runs the whole GoogleTest suite natively per target (plus an AddressSanitizer run on
+Linux), packages each target, then, on a fresh runner per target, unpacks the ZIP into a path with spaces
+and compiles a sealed room, a deliberately leaking room and the thin-brush reproducer with the unpacked
+programs. Only archives that passed are published, by one job, once; a rerun never replaces a published file.
+Pull requests run the same validation with a read-only token and publish nothing.
+
+The steps are plain Python (3.8+, standard library) and run the same way on a workstation:
+
+```sh
+git clone --recurse-submodules https://github.com/auto-pigeon/ericw-tools.git && cd ericw-tools
+python3 ci/auto-pigeon/selftest.py
+python3 ci/auto-pigeon/plan.py --sha HEAD --out ../plan.json
+python3 ci/auto-pigeon/fetch_deps.py --platform linux-amd64 --dest ../deps
+python3 ci/auto-pigeon/build.py --platform linux-amd64 --deps ../deps --build-dir ../build --plan ../plan.json --report ../build-report.json
+python3 ci/auto-pigeon/package.py --platform linux-amd64 --deps ../deps --build-report ../build-report.json --plan ../plan.json --out ../dist
+python3 ci/auto-pigeon/accept.py --platform linux-amd64 --archive ../dist/auto-pigeon-ericw-tools-1.<N>-linux-amd64.zip \
+    --package-json ../dist/auto-pigeon-ericw-tools-1.<N>-linux-amd64.package.json --plan ../plan.json \
+    --work "../acceptance work" --report ../acceptance.json
+```
+
+`ci/auto-pigeon/deps.lock.json` pins Embree 4.4.0 and oneTBB 2021.11.0 by URL and SHA-256. The source archive
+of a release rebuilds without Git history; see `AUTO-PIGEON-SOURCE.md` inside it. The compiled program bytes
+are not claimed to be reproducible.
+
+---
+
 ## ericw-tools
  - Website:         http://ericwa.github.io/ericw-tools
  - Documentation:

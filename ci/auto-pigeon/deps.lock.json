@@ -1,0 +1,73 @@
+{
+  "schema": "auto-pigeon-ericw-deps/1",
+  "comment": "Every byte the release build downloads. Change a version here and nowhere else; fetch_deps.py refuses a digest that does not match.",
+  "googletest": {
+    "version": "1.14.0",
+    "repository": "https://github.com/google/googletest.git",
+    "commit": "f8d7d77c06936315286eb55f8de22cd23c188571",
+    "license": "BSD-3-Clause",
+    "pinned_in": "3rdparty/CMakeLists.txt (FetchContent GIT_TAG); test-only, not linked into the released programs"
+  },
+  "embree": {
+    "version": "4.4.0",
+    "license": "Apache-2.0",
+    "source_repository": "https://github.com/RenderKit/embree",
+    "source_tag": "v4.4.0",
+    "source_commit": "ff9381774dc99fea81a932ad276677aad6a3d4dd",
+    "binaries": {
+      "linux-amd64": {
+        "url": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x86_64.linux.tar.gz",
+        "sha256": "cb3d4402537fc9165c76c3316b8953dcfea523cd1eaf588e2de7639864ee3c57"
+      },
+      "windows-amd64": {
+        "url": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x64.windows.zip",
+        "sha256": "d951e5e6bd295c54cdd66be9cdb44a4e8c42fb38a99f94f79305e48765fc3454"
+      },
+      "macos-amd64": {
+        "url": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x86_64.macosx.zip",
+        "sha256": "435b4ef3421eb75cf41a41438d44b760f4d86c24124e0b9a0ed9d85adff54b4d"
+      },
+      "macos-arm64": {
+        "url": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.arm64.macosx.zip",
+        "sha256": "288a5bb1adc3d4cd0f86646008f4ac442b958b1635bf60cecff8f1b232e999a1"
+      }
+    }
+  },
+  "onetbb": {
+    "version": "2021.11.0",
+    "license": "Apache-2.0",
+    "source_repository": "https://github.com/uxlfoundation/oneTBB",
+    "source_tag": "v2021.11.0",
+    "source_commit": "8b829acc65569019edb896c5150d427f288e8aba",
+    "binaries": {
+      "linux-amd64": {
+        "url": "https://github.com/uxlfoundation/oneTBB/releases/download/v2021.11.0/oneapi-tbb-2021.11.0-lin.tgz",
+        "sha256": "95659f4d7b1711c41ffa190561d4e5b6841efc8091549661c7a2e6207e0fa79b"
+      },
+      "windows-amd64": {
+        "url": "https://github.com/uxlfoundation/oneTBB/releases/download/v2021.11.0/oneapi-tbb-2021.11.0-win.zip",
+        "sha256": "02f0e93600fba69bb1c00e5dd3f66ae58f56e5410342f6155455a95ba373b1b6"
+      },
+      "macos-amd64": {
+        "url": "https://github.com/uxlfoundation/oneTBB/releases/download/v2021.11.0/oneapi-tbb-2021.11.0-mac.tgz",
+        "sha256": "360bcb20bcdcd01e8492c32bba6d5d5baf4bc83f77fb9dbf1ff701ac816e3b44"
+      }
+    },
+    "source_builds": {
+      "macos-arm64": {
+        "reason": "the oneTBB 2021.11.0 macOS binary package is x86_64 only, and Embree's arm64 package carries libtbb but neither tbbmalloc nor the headers",
+        "cmake_options": [
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DTBB_TEST=OFF",
+          "-DTBB_STRICT=OFF",
+          "-DCMAKE_OSX_ARCHITECTURES=arm64",
+          "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"
+        ]
+      }
+    }
+  },
+  "runtime_policy": {
+    "comment": "Embree's binary packages carry their own copy of TBB. The programs link the explicit oneTBB above, the tests run against it and it is the one shipped. package.py records the other copy's digest and fails on any same-named library with different bytes that is not listed here.",
+    "prefer_onetbb_over_embree_bundled": ["libtbb.so.12", "libtbbmalloc.so.2", "tbb12.dll", "tbbmalloc.dll", "libtbb.12.dylib", "libtbbmalloc.2.dylib"]
+  }
+}

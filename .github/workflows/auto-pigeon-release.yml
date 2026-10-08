@@ -1,0 +1,233 @@
+# The Auto-Pigeon fork's ONE build, test, acceptance and release path.
+#
+#   push to main        build, test and accept every target natively, then publish a development prerelease
+#   pull_request        the same validation with a read-only token; never publishes
+#   workflow_dispatch   validation; publishes only when publish=true AND the ref is main
+#
+# The plan job freezes the commit, version, tag and version banner once; every other job reads it.
+# Only the publish job has contents: write. It consumes the archives the accept jobs approved and
+# never compiles. The tag it creates does not start this workflow again (push is limited to branches).
+# All logic is in ci/auto-pigeon/*.py so that every step can be run the same way on a workstation.
+
+name: Auto-Pigeon release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a development prerelease (main only, same gates)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # one run per ref; a newer pull-request push replaces the older run, a run on main is never cancelled mid-upload
+  group: auto-pigeon-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      commit: ${{ steps.plan.outputs.commit }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      stamp: ${{ steps.plan.outputs.stamp }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the version is the commit count
+          fetch-tags: true
+          persist-credentials: false
+      - name: Freeze the plan
+        id: plan
+        env:
+          WANT_PUBLISH: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)) }}
+        run: |
+          python3 ci/auto-pigeon/selftest.py
+          python3 ci/auto-pigeon/plan.py --sha "$(git rev-parse HEAD)" --out plan.json --publish "$WANT_PUBLISH"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plan
+          path: plan.json
+          if-no-files-found: error
+
+  build:
+    name: Build and test (${{ matrix.platform }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    # a macOS candidate that fails stays unpublished and does not stop the required targets
+    continue-on-error: ${{ matrix.candidate }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-amd64, runner: ubuntu-22.04, candidate: false, python: python3 }
+          - { platform: windows-amd64, runner: windows-2022, candidate: false, python: python }
+          - { platform: macos-amd64, runner: macos-15-intel, candidate: true, python: python3 }
+          - { platform: macos-arm64, runner: macos-15, candidate: true, python: python3 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+      - name: Fetch the pinned dependencies
+        run: ${{ matrix.python }} ci/auto-pigeon/fetch_deps.py --platform ${{ matrix.platform }} --dest "${{ runner.temp }}/deps" --jobs 3
+      - name: Build and run the tests
+        run: ${{ matrix.python }} ci/auto-pigeon/build.py --platform ${{ matrix.platform }} --deps "${{ runner.temp }}/deps" --build-dir "${{ runner.temp }}/build" --plan "${{ runner.temp }}/plan/plan.json" --report "${{ runner.temp }}/build-report.json" --jobs 3
+      - name: Package the candidate archive
+        run: ${{ matrix.python }} ci/auto-pigeon/package.py --platform ${{ matrix.platform }} --deps "${{ runner.temp }}/deps" --build-report "${{ runner.temp }}/build-report.json" --plan "${{ runner.temp }}/plan/plan.json" --out "${{ runner.temp }}/dist"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: candidate-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/dist/*.zip
+            ${{ runner.temp }}/dist/*.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  asan:
+    name: AddressSanitizer tests (linux-amd64)
+    needs: plan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+      - run: python3 ci/auto-pigeon/fetch_deps.py --platform linux-amd64 --dest "${{ runner.temp }}/deps"
+      - run: python3 ci/auto-pigeon/build.py --platform linux-amd64 --asan --deps "${{ runner.temp }}/deps" --build-dir "${{ runner.temp }}/build" --plan "${{ runner.temp }}/plan/plan.json" --report "${{ runner.temp }}/asan-report.json" --jobs 3
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asan-report
+          path: ${{ runner.temp }}/asan-report.json
+          if-no-files-found: error
+
+  source:
+    name: Source archive, rebuilt from itself
+    needs: plan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+      - name: Write the source archive
+        run: python3 ci/auto-pigeon/source_archive.py --plan "${{ runner.temp }}/plan/plan.json" --out "${{ runner.temp }}/dist"
+      - name: Rebuild and test from the unpacked archive alone
+        run: |
+          mkdir "$RUNNER_TEMP/from-source" && tar -xzf "$RUNNER_TEMP"/dist/*-source.tar.gz -C "$RUNNER_TEMP/from-source"
+          cd "$RUNNER_TEMP"/from-source/*/
+          python3 ci/auto-pigeon/fetch_deps.py --platform linux-amd64 --dest "$RUNNER_TEMP/deps"
+          python3 ci/auto-pigeon/build.py --platform linux-amd64 --deps "$RUNNER_TEMP/deps" --build-dir "$RUNNER_TEMP/build" --plan ci/auto-pigeon/release-plan.json --report "$RUNNER_TEMP/source-build-report.json" --jobs 3
+          python3 ci/auto-pigeon/source_archive.py --mark-rebuilt "$RUNNER_TEMP/source-build-report.json" --plan ci/auto-pigeon/release-plan.json --out "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source
+          path: |
+            ${{ runner.temp }}/dist/*-source.tar.gz
+            ${{ runner.temp }}/dist/*.source.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  accept:
+    name: Accept the extracted archive (${{ matrix.platform }})
+    needs: [plan, build]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    continue-on-error: ${{ matrix.candidate }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-amd64, runner: ubuntu-22.04, candidate: false, python: python3 }
+          - { platform: windows-amd64, runner: windows-2022, candidate: false, python: python }
+          - { platform: macos-amd64, runner: macos-15-intel, candidate: true, python: python3 }
+          - { platform: macos-arm64, runner: macos-15, candidate: true, python: python3 }
+    steps:
+      # a fresh runner: no build tree, no dependency directory, no submodules; only the scripts and the fixtures
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: candidate-${{ matrix.platform }}
+          path: ${{ runner.temp }}/candidate
+      - name: Accept
+        run: ${{ matrix.python }} ci/auto-pigeon/accept.py --platform ${{ matrix.platform }} --archive "${{ runner.temp }}/candidate/auto-pigeon-ericw-tools-${{ needs.plan.outputs.version }}-${{ matrix.platform }}.zip" --package-json "${{ runner.temp }}/candidate/auto-pigeon-ericw-tools-${{ needs.plan.outputs.version }}-${{ matrix.platform }}.package.json" --plan "${{ runner.temp }}/plan/plan.json" --work "${{ runner.temp }}/acceptance work" --report "${{ runner.temp }}/report/acceptance-${{ matrix.platform }}.json"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: acceptance-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/report/acceptance-${{ matrix.platform }}.json
+            ${{ runner.temp }}/acceptance work/logs/*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish:
+    name: Publish the development prerelease
+    # runs only when every job above succeeded (a failed macOS candidate does not fail its job), on main, when planned
+    needs: [plan, build, asan, source, accept]
+    if: needs.plan.outputs.publish == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: ${{ runner.temp }}/artifacts
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 ci/auto-pigeon/publish.py --plan "${{ runner.temp }}/artifacts/plan/plan.json" --artifacts "${{ runner.temp }}/artifacts" --repo "${{ github.repository }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" --out "${{ runner.temp }}/release"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-record
+          path: |
+            ${{ runner.temp }}/release/*.json
+            ${{ runner.temp }}/release/*.md
+            ${{ runner.temp }}/release/SHA256SUMS
+          if-no-files-found: warn

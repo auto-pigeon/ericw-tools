@@ -1,0 +1,54 @@
+# Auto-Pigeon EricW tools @VERSION@ — @PLATFORM@
+
+This is an **unsigned development build** of the **Auto-Pigeon fork** of ericw-tools, the Quake
+map compilers by Eric Wasylishen and contributors. It is not an upstream release.
+
+| | |
+| --- | --- |
+| Release | `@TAG@` |
+| Fork commit | `@COMMIT@` — <@FORK@/commit/@COMMIT@> |
+| Upstream base | `@UPSTREAM_DESCRIBE@` of <@UPSTREAM@> |
+| Version banner | `@STAMP@` |
+| Target | @PLATFORM@ |
+
+The fork adds one compiler change to upstream `main`: `SplitBrush` splits thin brush fragments
+with `PLANESIDE_EPSILON` instead of `0.1`, which closes a clip-hull leak through valid thin
+geometry, together with its regression test. Upstream has not reviewed or accepted that change.
+
+## Layout
+
+```text
+@STEM@/
+  bin/            qbsp vis light bspinfo bsputil maputil, and the libraries they load
+  licenses/       GPL texts and the notices of every library in bin/
+  README.md       this file
+  build-info.json what was built, from what, with what
+  MANIFEST.json   every file of this archive with its size, mode and SHA-256
+```
+
+`bin/` is self-contained: keep the programs and the libraries beside them together. The folder
+may live anywhere, including a path with spaces. Nothing needs to be installed, and nothing
+here downloads or updates anything.
+
+## Requirements
+
+@REQUIREMENTS@
+
+## Use
+
+@USAGE@
+
+Every program prints `ericw-tools @STAMP@` in its first lines; that string is how to tell this
+build from an upstream one.
+
+## Verify
+
+Compare the ZIP with the `SHA256SUMS` file of the same release before unpacking. A SHA-256 proves
+the download is intact; it is not a signature and says nothing about who built it.
+
+## Source and licence
+
+ericw-tools is free software under the GNU General Public License, version 2 or (at your option)
+any later version; see `licenses/COPYING` and `licenses/gpl_v3.txt`. The complete corresponding
+source of this build, with its submodules, pinned test framework and build recipes, is the
+`@SOURCE_ASSET@` file of the same release.
