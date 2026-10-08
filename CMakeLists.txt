@@ -26,6 +26,15 @@ if(NOT GIT_DESCRIBE)
 	endif()
 endif()
 
+# Opt-in release stamp (Auto-Pigeon fork CI). When set, it replaces the git describe output in the
+# version banner, so that every matrix row, test and rerun of one release plan prints the same
+# identity whatever tags exist at that moment. Unset (the default), nothing above changes.
+set(ERICWTOOLS_RELEASE_STAMP "" CACHE STRING "Version label to print instead of the git describe output (release builds)")
+if(NOT ("${ERICWTOOLS_RELEASE_STAMP}" STREQUAL ""))
+	set(GIT_DESCRIBE "${ERICWTOOLS_RELEASE_STAMP}")
+	message(STATUS "using release stamp \"${GIT_DESCRIBE}\"")
+endif()
+
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
 	add_compile_options(/EHsc)
 	message(STATUS "working around exceptions not being enabled by default on clang-cl")
