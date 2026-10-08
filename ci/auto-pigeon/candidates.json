@@ -1,0 +1,11 @@
+{
+  "schema": "auto-pigeon-ericw-candidates/1",
+  "comment": "Targets that are built and tested on every run but are not required. A target listed here is published the first time its native build, whole test suite and extracted-archive acceptance all pass; until then publish.py prints the last MEASURED blocker below beside this run's own reason. Remove an entry when it no longer describes a measured result.",
+  "macos-arm64": {
+    "measured": "2026-10-08, workflow run 37838801351 (pull_request validation), runner macos-15 (arm64, AppleClang 17)",
+    "result": "Builds natively with Embree 4.4.0's arm64 package and oneTBB 2021.11.0 built from its pinned source commit. GoogleTest: 392 run, 391 passed, 1 failed.",
+    "blocker": "tests/test_bsputil.cc bsputil.svg compares the SVG text with a literal that contains `rgb(-nan, -nan, -nan)`; on arm64 the same 0/0 prints `rgb(nan, nan, nan)`. The expectation is x86-specific (upstream marks it `TODO: the -nan`).",
+    "not_done": "The expectation was not changed and the test was not excluded to obtain a green run. Because the suite fails, no arm64 archive is packaged, so its extracted-archive acceptance has never run.",
+    "narrow_repair": "Upstream: make bsputil --svg not divide by zero for an unlit face (or print a defined colour), then update the one expected string."
+  }
+}

@@ -18,7 +18,7 @@ where `<N>` is the number of commits in `main`.
 | Linux x86-64 | `auto-pigeon-ericw-tools-1.<N>-linux-amd64.zip` | required: no release without it |
 | Windows x86-64 | `auto-pigeon-ericw-tools-1.<N>-windows-amd64.zip` | required: no release without it |
 | macOS Intel | `auto-pigeon-ericw-tools-1.<N>-macos-amd64.zip` | published only when it passed on a native Intel runner |
-| macOS Apple silicon | `auto-pigeon-ericw-tools-1.<N>-macos-arm64.zip` | candidate; published only when it passed natively |
+| macOS Apple silicon | `auto-pigeon-ericw-tools-1.<N>-macos-arm64.zip` | candidate, **not published yet**: see `ci/auto-pigeon/candidates.json` |
 | Source | `auto-pigeon-ericw-tools-1.<N>-source.tar.gz` | the commit with all submodules and the pinned GoogleTest |
 
 There is no Windows or Linux arm64 build. A target missing from a release was not built or did not pass;
@@ -74,12 +74,19 @@ the download is intact; these builds are not signed.
 
 ### Use in the Auto-Pigeon Companion
 
-The Companion runs compilers you installed; it does not download or bundle these. In the Companion open
-**Profiles → New profile → A build tool**, start from the built-in ericw-tools profile, set each program's
-*File inside its folder* to `bin/qbsp`, `bin/vis`, `bin/light`, `bin/bspinfo`, `bin/bsputil`, install and approve
-it, then under *Where these programs are on this machine* give the unpacked
-`auto-pigeon-ericw-tools-1.<N>-<target>` folder and press **Use this folder**. Keep an older toolchain in its own
-folder and profile; do not overwrite one release with another.
+The Companion runs compilers you installed; it does not download or bundle these. Keep each release in
+its own folder and give it its own profile; do not overwrite one toolchain with another.
+
+1. Unpack the ZIP for your system to a folder of its own, as above.
+2. In the Companion open **Profiles → New profile**, choose **A build tool**, and describe the tool with the
+   programs `bin/qbsp`, `bin/vis`, `bin/light`, `bin/bspinfo` and `bin/bsputil` (*File inside its folder*). Starting
+   from the built-in ericw-tools profile keeps its actions and options; give the capabilities names of their own
+   so the new tool sits beside the built-in one. Install it and approve it.
+3. On its Configure page, under *Where these programs are on this machine*, enter the unpacked
+   `auto-pigeon-ericw-tools-1.<N>-<target>` folder and press **Use this folder**.
+4. Add a build pipeline whose stages name that tool, approve it, and pick it in **Build**.
+
+The programs find their libraries beside themselves, so the Companion needs no library path.
 
 ### How a release is made, and rebuilding one
 

@@ -20,7 +20,7 @@ import pathlib
 import sys
 import tempfile
 
-from common import PLATFORMS, REQUIRED_PLATFORMS, Failure, load_json, log, run, sha256_file, write_json
+from common import HERE, PLATFORMS, REQUIRED_PLATFORMS, Failure, load_json, log, run, sha256_file, write_json
 
 LABELS = {"linux-amd64": "Linux x86-64", "windows-amd64": "Windows x86-64", "macos-amd64": "macOS Intel (x86-64)",
           "macos-arm64": "macOS Apple silicon (arm64)"}
@@ -38,7 +38,7 @@ def evaluate(platform, plan, artifacts):
     package_path, zip_path = find(artifacts, stem + ".package.json"), find(artifacts, asset)
     report_path = find(artifacts, "acceptance-%s.json" % platform)
     if not package_path or not zip_path:
-        return None, "no archive was built for this target in this run"
+        return None, "its native build or test suite did not pass in this run, so no archive exists"
     if not report_path:
         return None, "the archive was built but its native acceptance produced no report"
     package, report = load_json(package_path), load_json(report_path)
@@ -90,8 +90,14 @@ def notes(plan, accepted, missing, source, run_url):
     for a in accepted:
         lines.append("| %s | `%s` | %d run, %d failed | yes: %d steps on a native runner |" % (
             LABELS[a["platform"]], a["name"], a["tests"]["run"], a["tests"]["failures"], a["acceptance"]["steps_passed"]))
+    known = load_json(HERE / "candidates.json")
     for platform, reason in missing:
         lines.append("| %s | **not published** | | %s |" % (LABELS[platform], reason))
+    for platform, reason in missing:
+        if platform in known:
+            k = known[platform]
+            lines += ["", "**%s is a candidate, not a supported target.** Last measured (%s): %s Blocker: %s %s" % (
+                LABELS[platform], k["measured"], k["result"], k["blocker"], k["not_done"])]
     lines += [
         "",
         "Each ZIP holds `qbsp`, `vis`, `light`, `bspinfo`, `bsputil` and `maputil` with the Embree, oneTBB and (on Windows) "
