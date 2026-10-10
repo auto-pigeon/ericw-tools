@@ -3162,6 +3162,53 @@ TEST(testmapsQ1, cliphull2ThinFragmentSplit)
     }
 }
 
+TEST(testmapsQ1, cliphullBevelDuplicatesFace)
+{
+    // an edge bevel that lies on one of the brush's own faces must not be added as a second side:
+    // in the clip hulls the two coincident sides clip each other's windings away and the expanded
+    // brush is left open. The elbow here is ~4180 units from the origin, where the bevel's plane
+    // differs from the face's by more than DIST_EPSILON in `dist` although they are the same
+    // plane to 2e-5 over the brush.
+    for (const std::vector<std::string> &extra_args :
+        {std::vector<std::string>{"-leaktest"}, std::vector<std::string>{"-leaktest", "-forcegoodtree"}}) {
+        SCOPED_TRACE(extra_args.back());
+
+        // -leaktest throws if any hull leaks
+        const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_cliphull_bevel_duplicates_face.map", extra_args);
+        const dmodelh2_t *world = &bsp.dmodels[0];
+
+        // the middle of each leg of the elbow, 14 units deep: solid in every hull
+        for (const qvec3d &inside : {qvec3d{3131.522135, -2792.461643, 551.288211},
+                 qvec3d{3109.637284, -2756.039134, 631.203504}}) {
+            SCOPED_TRACE(fmt::format("inside {}", inside));
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindLeafAtPoint(&bsp, world, inside)->contents);
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 1, world, inside));
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 2, world, inside));
+        }
+
+        // origins at which the hull 1 box (-16 -16 -24)..(16 16 32) is 16 units clear of the elbow
+        for (const qvec3d &clear : {qvec3d{3175.053317, -2763.946286, 530.992629},
+                 qvec3d{3178.667298, -2769.960961, 553.943943}}) {
+            SCOPED_TRACE(fmt::format("hull 1 clear {}", clear));
+            EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 1, world, clear));
+        }
+
+        // origins at which the hull 2 box (-32 -32 -24)..(32 32 64) is 18 to 34 units clear of it
+        for (const qvec3d &clear : {qvec3d{3063.442026, -2857.784885, 523.975708},
+                 qvec3d{3192.011351, -2745.570697, 508.041315}, qvec3d{3199.239314, -2757.600047, 553.943943},
+                 qvec3d{3168.369749, -2706.224465, 522.075157}}) {
+            SCOPED_TRACE(fmt::format("hull 2 clear {}", clear));
+            EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 2, world, clear));
+        }
+
+        // the player start is in the open room in every hull
+        const qvec3d player_start{2942.258134, -2694.9331, 506.262427};
+        EXPECT_EQ(CONTENTS_EMPTY, BSP_FindLeafAtPoint(&bsp, world, player_start)->contents);
+        EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 1, world, player_start));
+        EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 2, world, player_start));
+    }
+}
+
 TEST(testmapsQ1, leaktest)
 {
     auto l = []() {
