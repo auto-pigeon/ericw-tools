@@ -39,7 +39,7 @@ THIN_PROBES = (
     (1, (-105.055035, -702.129458, -4.023305), "EMPTY", "the light, hull 1"),
     (2, (-105.055035, -702.129458, -4.023305), "EMPTY", "the light, hull 2"),
 )
-# Hull 0 air and solid of the two sliver-fragment reproducers (see tests/test_qbsp.cc sliverFragmentPhantomSolid and
+# Hull 0 air and solid of the sliver-fragment reproducers (see tests/test_qbsp.cc sliverFragmentPhantomSolid and
 # fragmentLeafOutsideBrush). Both maps sealed and qbsp exited 0 while these air points read SOLID, so sealing is not asked alone.
 AIR_MAPS = (
     ("q1_brushbsp_sliver_fragment_phantom_solid.map", (
@@ -57,6 +57,21 @@ AIR_MAPS = (
         ((0,), (2503.88, 182.27, -120.51), "EMPTY", "open air 230 units from every brush, 6 units along"),
         ((0,), (1744.848036, -432.155936, -128.067913), "EMPTY", "air a unit above where a sheet of solid was drawn"),
         ((0,), (1744.848036, -432.155936, -130.067913), "EMPTY", "air a unit below where a sheet of solid was drawn"),
+    )),
+    # The other side of the same rule (tests/test_qbsp.cc leafGuardKeepsMaterial): thin material that must STAY. Both windows
+    # of this room are closed only by thin pieces, so the leak test above already asks for them; these ask where.
+    ("q1_brushbsp_leaf_guard_keeps_material.map", (
+        ((0, 1, 2), (264, 160, 192), "SOLID", "the brick that closes the east window and stands 0.012 proud"),
+        ((0,), (-160, 255.97, 192), "SOLID", "the middle of the 0.06 plate that alone closes the north window"),
+        ((0,), (210, 210, 96.006), "SOLID", "the 0.012 of one box above the top of the box it overlaps"),
+        ((0,), (120.03, -100, 112), "SOLID", "the middle of the 0.06 fin"),
+        ((0,), (-174, 60, 24), "WATER", "the middle of the pool"),
+        ((0,), (-78, 60, 48.042), "WATER", "the middle of the 0.06 film of water over the bank"),
+        ((0,), (255.994, 60, 192), "EMPTY", "air in the 0.012 the brick stands proud, 68 units past its edge"),
+        ((0,), (120.03, 4, 112), "EMPTY", "air in the plane of the fin, 40 units past its edge"),
+        ((0,), (-60, 255.97, 192), "EMPTY", "air in the plane of the plate, 52 units past its edge"),
+        ((0,), (-78, 60, 49), "EMPTY", "air a unit above the film of water"),
+        ((0, 1, 2), (200, -200, 40), "EMPTY", "player start"),
     )),
 )
 ROOM_PROBES = (
@@ -412,7 +427,7 @@ class Acceptance:
         self.step("4. the same room from a path and working directory with spaces", self.sealed_room_with_spaces)
         self.step("5. negative control: the room with a missing wall leaks and is refused", self.negative_control)
         self.step("6. thin-fragment reproducer, ordinary and -forcegoodtree, hulls 0-2", self.thin_fragment)
-        self.step("7. sliver-fragment reproducers: no solid in the map's air, ordinary and -forcegoodtree", self.sliver_fragments)
+        self.step("7. sliver-fragment reproducers: no solid in the map's air and thin material kept, ordinary and -forcegoodtree", self.sliver_fragments)
         self.report["verdict"] = "pass"
 
 

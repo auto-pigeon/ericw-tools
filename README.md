@@ -13,11 +13,33 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
 - `LeafNode` gives a leaf a brush's contents only when the middle of the leaf is inside that brush, so a fragment that
   cannot be carved any further no longer makes a sheet of solid in open air (`testmapsQ1.fragmentLeafOutsideBrush`).
   Upstream 2.0.0-alpha11 has milder forms of the same defect, which this removes on the maps measured.
+  `testmapsQ1.leafGuardKeepsMaterial` is the other side of that rule: thin material the map has must stay, and the room
+  it seals must stay sealed.
 
-Known and not changed: with the default T-junction mode a drawn face can get a 0.03-unit spike (a vertex visited
-twice); upstream writes the same. On one 712-brush hollow pipe, without `-forcegoodtree`, 1 of 1,248 exposed faces is
-still partly missing (upstream: 17, and 101 grid points of solid in air).
-Everything below this section is upstream's own README.
+#### Known limits
+
+- **A whole brush thinner than 0.02 units is not compiled correctly, and this fork does not claim it.** The side planes
+  of such a brush would cut the slab it lies in by a winding thinner than 0.02, which `SplitBrush` and `CheckSplitBrush`
+  refuse, so the slab stays one leaf that reaches far past the brush. Measured on release 1.4510, ordinary tree and
+  `-forcegoodtree` alike:
+  - a plate 0.012 thick that is the ONLY thing closing a window to the void is reported as a **leak** (`-leaktest` exit 1).
+    `LeafNode`'s rule is what drops it. ericw-tools 0.18.1 seals it correctly; 2.0.0-alpha11 and releases 1.4502 / 1.4505
+    seal it by making the whole slab solid. `testmaps/q1_brushbsp_sub002_plate_seals_window.map`.
+  - a free fin 0.012 thick becomes a sheet from wall to wall, and the half of the room behind it is filled as
+    unreachable: half the room's air is solid in hull 0, **no leak, exit 0**. This is not `LeafNode`'s rule; it comes
+    with the 0.001 split tolerance. 0.18.1 is correct; alpha11 and 1.4502 / 1.4505 leave a smaller block of solid.
+    `testmaps/q1_brushbsp_sub002_free_fin.map`.
+
+  The threshold is the 0.02 bound itself: 0.0199 fails and 0.0201 is right. Thin *fragments* of thicker brushes (a
+  brick standing 0.012 proud of a wall, overlapping tops 0.012 apart, a bank 0.012 above water) are right at every
+  thickness measured. No test asserts the two reproducers; they are kept so the defect can be found again. Carving such
+  slabs means changing the 0.02 bound in both functions, which has not been done.
+- On one 712-brush hollow pipe, without `-forcegoodtree`, 1 of 1,248 exposed faces is still partly missing (upstream:
+  17, and 101 grid points of solid in air). With `-forcegoodtree` all 1,248 are drawn.
+- With the default T-junction mode a drawn face can get a 0.03-unit spike (a vertex visited twice); upstream writes
+  the same.
+
+Everything below the Auto-Pigeon sections is upstream's own README.
 
 ### Downloads
 
@@ -30,7 +52,7 @@ where `<N>` is the number of commits in `main`.
 | Linux x86-64 | `auto-pigeon-ericw-tools-1.<N>-linux-amd64.zip` | required: no release without it |
 | Windows x86-64 | `auto-pigeon-ericw-tools-1.<N>-windows-amd64.zip` | required: no release without it |
 | macOS Intel | `auto-pigeon-ericw-tools-1.<N>-macos-amd64.zip` | published only when it passed on a native Intel runner |
-| macOS Apple silicon | `auto-pigeon-ericw-tools-1.<N>-macos-arm64.zip` | candidate, **not published yet**: see `ci/auto-pigeon/candidates.json` |
+| macOS Apple silicon | `auto-pigeon-ericw-tools-1.<N>-macos-arm64.zip` | published only when it passed on a native arm64 runner (since 1.4505) |
 | Source | `auto-pigeon-ericw-tools-1.<N>-source.tar.gz` | the commit with all submodules and the pinned GoogleTest |
 
 There is no Windows or Linux arm64 build. A target missing from a release was not built or did not pass;
@@ -105,8 +127,8 @@ The programs find their libraries beside themselves, so the Companion needs no l
 `.github/workflows/auto-pigeon-release.yml` is the only build and release path. It freezes the commit and
 version once, builds and runs the whole GoogleTest suite natively per target (plus an AddressSanitizer run on
 Linux), packages each target, then, on a fresh runner per target, unpacks the ZIP into a path with spaces
-and compiles a sealed room, a deliberately leaking room and the thin-brush reproducer with the unpacked
-programs. Only archives that passed are published, by one job, once; a rerun never replaces a published file.
+and compiles a sealed room, a deliberately leaking room, the thin-brush reproducer, the two sliver reproducers
+and the thin-material control with the unpacked programs, asking each for its solid, its water and its air. Only archives that passed are published, by one job, once; a rerun never replaces a published file.
 Pull requests run the same validation with a read-only token and publish nothing.
 
 The steps are plain Python (3.8+, standard library) and run the same way on a workstation:

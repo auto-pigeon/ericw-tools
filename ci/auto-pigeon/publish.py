@@ -38,7 +38,8 @@ def evaluate(platform, plan, artifacts):
     package_path, zip_path = find(artifacts, stem + ".package.json"), find(artifacts, asset)
     report_path = find(artifacts, "acceptance-%s.json" % platform)
     if not package_path or not zip_path:
-        return None, "its native build or test suite did not pass in this run, so no archive exists"
+        return None, ("no archive of it reached this job: its build job did not finish (native build, test suite, packaging or the "
+                      "upload of the packaged archive), so nothing was accepted")
     if not report_path:
         return None, "the archive was built but its native acceptance produced no report"
     package, report = load_json(package_path), load_json(report_path)
@@ -87,7 +88,18 @@ def notes(plan, accepted, missing, source, run_url):
         "(releases 1.4502 and 1.4505 left the sliver's whole leaf solid: solid air beside non-planar geometry, the faces behind "
         "it not drawn, no leak and exit 0). And `LeafNode` gives a leaf a brush's contents only when the middle of the leaf is "
         "inside that brush, which also removes sheets of solid upstream 2.0.0-alpha11 leaves in the same places. Tests "
-        "`testmapsQ1.sliverFragmentPhantomSolid` and `testmapsQ1.fragmentLeafOutsideBrush`.",
+        "`testmapsQ1.sliverFragmentPhantomSolid`, `testmapsQ1.fragmentLeafOutsideBrush` and, for the material that must stay, "
+        "`testmapsQ1.leafGuardKeepsMaterial`.",
+        "",
+        "### Known limits",
+        "",
+        "- **A whole brush thinner than 0.02 units is not compiled correctly.** Its side planes cannot split the slab it lies in "
+        "(the cut would be a winding thinner than 0.02), so the slab stays one leaf: a plate that thin which is the only thing "
+        "closing a hole is reported as a leak, and a free fin or skin that thin can become a sheet that divides the room, with "
+        "exit 0. At 0.0201 units and above, and for thinner *fragments* of thicker brushes, the measured cases are right. "
+        "Reproducers: `testmaps/q1_brushbsp_sub002_plate_seals_window.map`, `testmaps/q1_brushbsp_sub002_free_fin.map`.",
+        "- Without `-forcegoodtree`, 1 of 1,248 exposed faces of one 712-brush hollow pipe is still partly missing; with it, none.",
+        "- The default T-junction mode can give a drawn face a 0.03-unit spike, as upstream does.",
         "",
         "### Downloads",
         "",
