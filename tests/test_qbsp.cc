@@ -3316,6 +3316,83 @@ TEST(testmapsQ1, fragmentLeafOutsideBrush)
     }
 }
 
+TEST(testmapsQ1, leafGuardKeepsMaterial)
+{
+    // the other side of fragmentLeafOutsideBrush: LeafNode's rule (a brush fragment gives a leaf its
+    // contents only if the middle of the leaf is inside the fragment's brush) must not take away
+    // material the map has. One sealed room: fragments 0.012 thick of thicker brushes (a brick that
+    // closes a window to the void and stands proud of the wall, three overlapping boxes whose tops
+    // differ, a bank beside a pool) and whole brushes 0.06 thick (an oblique skin on a ramp, a plate
+    // that is the ONLY thing closing a second window, a free fin, a film of water). The rule drops
+    // five fragments here; every solid and liquid stays, the room stays sealed, and the air in the
+    // plane of each thin piece stays empty. Without the rule the air beside the proud brick is solid;
+    // releases 1.4502 / 1.4505 and upstream 2.0.0-alpha11 also put water above the film and a sheet
+    // of solid beside the fin. A whole brush thinner than 0.02 units is NOT claimed: see the README.
+    const double r = 0.03 * std::sqrt(2.0); // half the skin's thickness, measured along z
+    for (const std::vector<std::string> &extra_args :
+        {std::vector<std::string>{"-leaktest"}, std::vector<std::string>{"-leaktest", "-forcegoodtree"}}) {
+        SCOPED_TRACE(extra_args.back());
+
+        // -leaktest throws if any hull leaks: both windows are closed only by the thin pieces
+        const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_brushbsp_leaf_guard_keeps_material.map", extra_args);
+        const dmodelh2_t *world = &bsp.dmodels[0];
+        ASSERT_TRUE(prt.has_value());
+
+        // solid, more than 5 units inside its brush: all three hulls
+        for (const qvec3d &inside : {qvec3d{264, 160, 192}, qvec3d{16, -150, 60}, qvec3d{60, 60, 48},
+                 qvec3d{132, 132, 48}, qvec3d{210, 210, 90}, qvec3d{-62, 60, 24}}) {
+            SCOPED_TRACE(fmt::format("inside {}", inside));
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindLeafAtPoint(&bsp, world, inside)->contents);
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 1, world, inside));
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 2, world, inside));
+        }
+
+        // the thin material itself, in its middle: the plate, the skin, the 0.012 of box B above box A,
+        // the 0.012 of the bank above the water, the fin
+        for (const qvec3d &thin : {qvec3d{-160, 255.97, 192}, qvec3d{-40, -150, 96 + r}, qvec3d{210, 210, 96.006},
+                 qvec3d{-30, 60, 48.006}, qvec3d{120.03, -100, 112}}) {
+            SCOPED_TRACE(fmt::format("thin solid {}", thin));
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindLeafAtPoint(&bsp, world, thin)->contents);
+        }
+
+        // the pool, and the film of water in its middle
+        for (const qvec3d &water : {qvec3d{-174, 60, 24}, qvec3d{-174, 60, 47}, qvec3d{-78, 60, 48.042}}) {
+            SCOPED_TRACE(fmt::format("water {}", water));
+            EXPECT_EQ(CONTENTS_WATER, BSP_FindLeafAtPoint(&bsp, world, water)->contents);
+        }
+
+        // air: in the plane of each thin piece but past its outline, and a unit above each top
+        for (const qvec3d &air : {qvec3d{120.03, -28, 112}, qvec3d{120.03, 4, 112}, qvec3d{120.03, -100, 200},
+                 qvec3d{-40, -70, 96 + r}, qvec3d{-40, -94, 97}, qvec3d{-60, 255.97, 192}, qvec3d{-160, 255.97, 100},
+                 qvec3d{255.994, 60, 192}, qvec3d{60, 60, 97}, qvec3d{210, 210, 97}, qvec3d{-30, 60, 49},
+                 qvec3d{-78, 60, 49}, qvec3d{-78, 0, 48.042}, qvec3d{-174, 60, 49}}) {
+            SCOPED_TRACE(fmt::format("air {}", air));
+            EXPECT_EQ(CONTENTS_EMPTY, BSP_FindLeafAtPoint(&bsp, world, air)->contents);
+        }
+        // and nothing is drawn in the air beside the fin or beside the skin
+        EXPECT_TRUE(BSP_FindFacesAtPoint(&bsp, world, qvec3d{120.03, 4, 112}).empty());
+        EXPECT_TRUE(BSP_FindFacesAtPoint(&bsp, world, qvec3d{-40, -70, 96 + r}).empty());
+
+        // the faces of the thin pieces are drawn where the map puts them
+        const double s = std::sqrt(0.5);
+        const std::pair<qvec3d, qvec3d> faces[] = {
+            {{255.988, 160, 192}, {-1, 0, 0}}, // the proud face of the brick
+            {{-160, 255.94, 192}, {0, -1, 0}}, // the plate
+            {{-40, -150, 96 + 2 * r}, {-s, 0, s}}, // the skin
+            {{60, 60, 96}, {0, 0, 1}}, // box A
+            {{210, 210, 96.012}, {0, 0, 1}}, // box B, 0.012 higher
+            {{-30, 60, 48.012}, {0, 0, 1}}, // the bank beside the film
+            {{120, -100, 112}, {-1, 0, 0}}, // the fin, one side
+            {{120.06, -100, 112}, {1, 0, 0}}, // the fin, the other
+            {{-174, 60, 48}, {0, 0, 1}}, // the surface of the pool
+            {{-78, 60, 48.072}, {0, 0, 1}}}; // the surface of the film
+        for (const auto &[foot, normal] : faces) {
+            SCOPED_TRACE(fmt::format("face at {}", foot));
+            EXPECT_NE(nullptr, BSP_FindFaceAtPoint(&bsp, world, foot, normal));
+        }
+    }
+}
+
 TEST(testmapsQ1, leaktest)
 {
     auto l = []() {
