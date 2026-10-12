@@ -3488,11 +3488,20 @@ struct sub002_paths_t
     std::filesystem::path map, bsp, prt, pts;
 };
 
-// a directory of this run's own: a .prt or .pts left by an earlier compile must not decide a result
+// a directory nothing has compiled into: a .prt or .pts left by an earlier compile must not decide a
+// result. An earlier directory is removed when it can be; it cannot always (on Windows the log of the
+// compile before this one is still open inside it), so the directory is numbered and the first
+// number that is free is taken.
 static sub002_paths_t Sub002Paths(const std::string &name)
 {
-    const auto dir = std::filesystem::temp_directory_path() / "ericw-tools-tests-sub002" / name;
-    std::filesystem::remove_all(dir);
+    static int serial = 0;
+    const auto base = std::filesystem::temp_directory_path() / "ericw-tools-tests-sub002";
+    std::filesystem::path dir;
+    do {
+        dir = base / fmt::format("{}-{}", name, serial++);
+        std::error_code ignored;
+        std::filesystem::remove_all(dir, ignored);
+    } while (std::filesystem::exists(dir));
     std::filesystem::create_directories(dir);
     return {dir / (name + ".map"), dir / (name + ".bsp"), dir / (name + ".prt"), dir / (name + ".pts")};
 }
