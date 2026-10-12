@@ -269,8 +269,13 @@ class Acceptance:
             reasons.append("no BSP was written")
         if not prt.is_file():
             reasons.append("no portal file was written")
-        elif prt.read_text(errors="replace").split()[:1] != ["PRT1"] or len(prt.read_text(errors="replace").split()) < 3:
-            reasons.append("the portal file is not a PRT1 file with leaf and portal counts")
+        else:
+            # PRT1: leafs, portals. PRT2 (what qbsp writes when the map has detail, and a liquid is detail to it):
+            # leafs, clusters, portals. vis reads both.
+            words = prt.read_text(errors="replace").split()
+            counts = {"PRT1": 2, "PRT2": 3}.get(words[0] if words else "")
+            if counts is None or len(words) < 1 + counts or not all(w.isdigit() for w in words[1:1 + counts]):
+                reasons.append("the portal file is not a PRT1 or PRT2 file with its leaf and portal counts")
         return (not reasons), reasons
 
     def full_compile(self, directory, map_name, cwd, map_argument, label):
