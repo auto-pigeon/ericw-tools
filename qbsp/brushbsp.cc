@@ -38,6 +38,8 @@
 // if a brush just barely pokes onto the other side,
 // let it slide by without chopping
 constexpr double PLANESIDE_EPSILON = 0.001;
+// how far outside a brush the middle of a leaf may be and still be that brush's (LeafNode)
+constexpr double LEAF_IN_BRUSH_EPSILON = 0.1;
 // 0.1
 
 constexpr int PSIDE_FRONT = 1;
@@ -69,6 +71,8 @@ struct bspstats_t : logging::stat_tracker_t
     stat &c_brushesonesided = register_stat("brushes split only on one side");
     // tiny volumes after clipping
     stat &c_tinyvolumes = register_stat("tiny volumes removed after splits");
+    // brush fragments left in a leaf whose middle is outside their brush (see LeafNode)
+    stat &c_leafnotinbrush = register_stat("brush fragments not filling their leaf");
 };
 
 /*
@@ -351,11 +355,35 @@ static void LeafNode(node_t *leafnode, bspbrush_t::container brushes, bspstats_t
 
     auto *leafdata = leafnode->get_leafdata();
 
+    // a brush fragment gives a leaf its contents only if the leaf is in the brush. When no plane of
+    // the fragment can split the node volume any further (CheckSplitBrush: the cut would be a
+    // winding thinner than 0.02), a fragment a hundredth of a unit thick is left in a leaf that
+    // reaches tens of units past the brush it came from, and the old rule made all of that leaf
+    // solid: a sheet of solid in open air, drawn on both sides. The leaf's own middle decides:
+    // inside the fragment's original brush (LEAF_IN_BRUSH_EPSILON, map units) the brush owns the leaf, as
+    // before; outside it the leaf is not that brush's.
+    std::optional<qvec3d> middle;
+    if (leafnode->volume) {
+        qvec3d sum{};
+        size_t count = 0;
+        for (auto &side : leafnode->volume->sides) {
+            for (auto &point : side.w) {
+                sum += point;
+                count++;
+            }
+        }
+        if (count) {
+            middle = sum / static_cast<double>(count);
+        }
+    }
+
     leafdata->contents = contentflags_t::make(EWT_VISCONTENTS_EMPTY);
     for (auto &brush : brushes) {
+        if (middle && !brush->original_brush()->contains_point(*middle, LEAF_IN_BRUSH_EPSILON)) {
+            stats.c_leafnotinbrush++;
+            continue;
+        }
         leafdata->contents = contentflags_t::combine_contents(leafdata->contents, brush->contents);
-    }
-    for (auto &brush : brushes) {
         leafdata->original_brushes.push_back(brush->original_brush());
     }
 
