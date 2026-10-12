@@ -453,8 +453,18 @@ class Acceptance:
         return self.probed_maps(AIR_MAPS, ["-tjunc", "none"])
 
     def whole_thin_brushes(self):
-        # the default T-junction mode, as tests/test_qbsp.cc compiles them
-        return self.probed_maps(WHOLE_THIN_MAPS, [])
+        # the default T-junction mode, as tests/test_qbsp.cc compiles them. Each map is judged on its own and every
+        # refusal is reported: the two fail differently (one seals with solid in its air, the other leaks), and an
+        # archive that gets both wrong should be told so once.
+        results, refusals = {}, []
+        for case in WHOLE_THIN_MAPS:
+            try:
+                results.update(self.probed_maps((case,), []))
+            except Failure as e:
+                refusals.append(str(e))
+        if refusals:
+            raise Failure(" | ".join(refusals))
+        return results
 
     def run_all(self):
         require_native(self.platform)
