@@ -666,12 +666,16 @@ static bool CheckSplitBrush(const bspbrush_t::ptr &brush, size_t planenum)
         }
     }
 
-    if (d_front < 0.1) // PLANESIDE_EPSILON)
-    {
+    // this must answer exactly what SplitBrush would do, with SplitBrush's tolerances (map units,
+    // BrushBSP): it decides whether a plane may split the node VOLUME. SplitBrush splits a brush
+    // fragment off as soon as it reaches PLANESIDE_EPSILON past a plane; if a plane that would cut
+    // the volume thinner than 0.1 is refused here, the planes bounding such a fragment are never
+    // used, the fragment is not carved out of its node, and the leaf it is left in - which can be
+    // many units across - becomes solid.
+    if (d_front < PLANESIDE_EPSILON) { // only on back
         return false;
     }
-    if (d_back > -0.1) // PLANESIDE_EPSILON)
-    { // only on front
+    if (d_back > -PLANESIDE_EPSILON) { // only on front
         return false;
     }
 
@@ -682,7 +686,7 @@ static bool CheckSplitBrush(const bspbrush_t::ptr &brush, size_t planenum)
         if (!w) {
             return false;
         }
-        w = w->clip_back(face.get_plane());
+        w = w->clip_back(face.get_plane(), PLANESIDE_EPSILON);
     }
 
     if (!w || WindingIsTiny(*w, 0.02)) { // the brush isn't really split
