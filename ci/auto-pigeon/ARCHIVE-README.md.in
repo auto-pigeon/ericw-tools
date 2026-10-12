@@ -11,9 +11,11 @@ map compilers by Eric Wasylishen and contributors. It is not an upstream release
 | Version banner | `@STAMP@` |
 | Target | @PLATFORM@ |
 
-The fork adds one compiler change to upstream `main`: `SplitBrush` splits thin brush fragments
-with `PLANESIDE_EPSILON` instead of `0.1`, which closes a clip-hull leak through valid thin
-geometry, together with its regression test. Upstream has not reviewed or accepted that change.
+The fork changes how `qbsp` splits thin geometry, with a regression test for each change: thin
+brush fragments are split with `PLANESIDE_EPSILON` instead of `0.1`, the predictor of a split
+uses the split's own tolerances, a leaf takes a brush's contents only when it lies in that
+brush, and a whole brush thinner than 0.02 units is cut out of the slab it lies in. The fork's
+`README.md` lists them and the limits that remain. Upstream has not reviewed or accepted them.
 
 ## Layout
 

@@ -13,6 +13,9 @@ REPO = HERE.parent.parent
 PLATFORMS = ("linux-amd64", "windows-amd64", "macos-amd64", "macos-arm64")
 REQUIRED_PLATFORMS = ("linux-amd64", "windows-amd64")
 PROGRAMS = ("qbsp", "vis", "light", "bspinfo", "bsputil", "maputil")
+# How many steps accept.py runs (1a-1d, 2-8). publish.py refuses a report with any other number: a report that
+# stopped early, or one written by an older acceptance that did not ask the newer questions, is not a pass.
+ACCEPTANCE_STEPS = 11
 ASSET_PREFIX = "auto-pigeon-ericw-tools"
 TAG_PREFIX = "auto-pigeon-ericw-v"
 

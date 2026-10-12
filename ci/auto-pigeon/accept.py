@@ -21,7 +21,7 @@ import zipfile
 
 import closure
 from bspread import Bsp
-from common import HERE, PLATFORMS, PROGRAMS, REPO, Failure, exe, load_json, log, require_native, run, sha256_file, write_json
+from common import ACCEPTANCE_STEPS, HERE, PLATFORMS, PROGRAMS, REPO, Failure, exe, load_json, log, require_native, run, sha256_file, write_json
 
 REQUIRED_MEMBERS = ("README.md", "build-info.json", "MANIFEST.json", "licenses/COPYING", "licenses/gpl_v3.txt",
                     "licenses/LICENSE-embree.txt", "licenses/LICENSE-oneTBB.txt")
@@ -72,6 +72,37 @@ AIR_MAPS = (
         ((0,), (-60, 255.97, 192), "EMPTY", "air in the plane of the plate, 52 units past its edge"),
         ((0,), (-78, 60, 49), "EMPTY", "air a unit above the film of water"),
         ((0, 1, 2), (200, -200, 40), "EMPTY", "player start"),
+    )),
+)
+# A WHOLE brush 0.012 units thick (tests/test_qbsp.cc sub002FreeFin and sub002PlateSealsWindow). Release 1.4513 and every
+# release before it gets both wrong: the fin's map exits 0 with no leak while 18 of these 36 room-air points read SOLID,
+# and the plate's map is reported as a leak. The room is air x,y in [-256,256], z in [0,256]; the points are the source's.
+ROOM_AIR_GRID = tuple(((0,), (x, y, z), "EMPTY", "room air") for x in (-192, -96, 96, 192) for y in (-192, 0, 192) for z in (32, 128, 224))
+WHOLE_THIN_MAPS = (
+    # the fin: x 0..0.012, y -64..64, z 64..160
+    ("q1_brushbsp_sub002_free_fin.map", ROOM_AIR_GRID + (
+        ((0,), (0.006, 0, 112), "SOLID", "the middle of the 0.012 fin"),
+        ((0,), (0.006, -40, 80), "SOLID", "inside the fin, 16 units from two of its edges"),
+        ((0,), (0.006, 40, 144), "SOLID", "inside the fin, 16 units from its other two edges"),
+        ((0,), (0.006, 80, 112), "EMPTY", "air in the plane of the fin, 16 units past its y end"),
+        ((0,), (0.006, -80, 112), "EMPTY", "air in the plane of the fin, 16 units past its other y end"),
+        ((0,), (0.006, 0, 48), "EMPTY", "air in the plane of the fin, 16 units under it"),
+        ((0,), (0.006, 0, 176), "EMPTY", "air in the plane of the fin, 16 units over it"),
+        ((1, 2), (0.006, 0, 112), "SOLID", "the fin in the clip hulls"),
+        ((1, 2), (-40, 0, 112), "EMPTY", "40 units beside the fin: past both clip hulls' reach"),
+        ((0, 1, 2), (-200, -200, 40), "EMPTY", "player start"),
+    )),
+    # the plate: x 255.988..256, y 112..208, z 144..240, over a window y 128..192, z 160..224 in the wall x 256..272
+    ("q1_brushbsp_sub002_plate_seals_window.map", ROOM_AIR_GRID + (
+        ((0,), (255.994, 160, 192), "SOLID", "the middle of the 0.012 plate, over the window"),
+        ((0,), (255.994, 120, 150), "SOLID", "inside the plate, over the wall beside the window"),
+        ((0,), (255.994, 200, 232), "SOLID", "inside the plate, over the wall at its other corner"),
+        ((0,), (255.5, 160, 192), "EMPTY", "air half a unit in front of the plate"),
+        ((0,), (255.994, 100, 192), "EMPTY", "air in the plane of the plate, 12 units past its edge"),
+        ((0,), (255.994, 160, 130), "EMPTY", "air in the plane of the plate, 14 units under it"),
+        ((0,), (255.994, 0, 128), "EMPTY", "air in the plane of the plate, in the middle of the wall"),
+        ((0, 1, 2), (264, 160, 192), "SOLID", "the window behind the plate (filled)"),
+        ((0, 1, 2), (-200, -200, 40), "EMPTY", "player start"),
     )),
 )
 ROOM_PROBES = (
@@ -395,14 +426,14 @@ class Acceptance:
             results[mode] = {"bsp_sha256": sha256_file(d / (base + ".bsp")), "probes": probes}
         return results
 
-    def sliver_fragments(self):
+    def probed_maps(self, maps, qbsp_args):
+        """Each map sealed under -leaktest, ordinary tree and -forcegoodtree, and every probe point as its source has it."""
         results = {}
-        for map_name, wanted in AIR_MAPS:
+        for map_name, wanted in maps:
             base = map_name[:-len(".map")]
             for mode, extra in (("ordinary", []), ("forcegoodtree", ["-forcegoodtree"])):
                 d = self.case_dir("case-%s-%s" % (base, mode), [(REPO / "testmaps" / map_name, map_name), (self.wad, "deprecated/free_wad.wad")])
-                # -tjunc none: the same isolation of the unrelated T-junction spike as the thin-fragment case
-                self.tool("qbsp", ["-leaktest", "-tjunc", "none", *extra, d / map_name], self.work / "unrelated cwd", label="%s-%s" % (base, mode))
+                self.tool("qbsp", ["-leaktest", *qbsp_args, *extra, d / map_name], self.work / "unrelated cwd", label="%s-%s" % (base, mode))
                 ok, reasons = self.judge_sealed(d, base)
                 if not ok:
                     raise Failure("%s (%s): %s" % (base, mode, "; ".join(reasons)))
@@ -416,6 +447,14 @@ class Acceptance:
                             raise Failure("%s (%s): hull %d at %s (%s) is %s, expected %s" % (base, mode, hull, point, what, got, want))
                 results["%s/%s" % (base, mode)] = {"bsp_sha256": sha256_file(d / (base + ".bsp")), "probes": probes}
         return results
+
+    def sliver_fragments(self):
+        # -tjunc none: the same isolation of the unrelated T-junction spike as the thin-fragment case
+        return self.probed_maps(AIR_MAPS, ["-tjunc", "none"])
+
+    def whole_thin_brushes(self):
+        # the default T-junction mode, as tests/test_qbsp.cc compiles them
+        return self.probed_maps(WHOLE_THIN_MAPS, [])
 
     def run_all(self):
         require_native(self.platform)
@@ -433,6 +472,8 @@ class Acceptance:
         self.step("5. negative control: the room with a missing wall leaks and is refused", self.negative_control)
         self.step("6. thin-fragment reproducer, ordinary and -forcegoodtree, hulls 0-2", self.thin_fragment)
         self.step("7. sliver-fragment reproducers: no solid in the map's air and thin material kept, ordinary and -forcegoodtree", self.sliver_fragments)
+        self.step("8. whole brushes 0.012 thick: a free fin leaves the room's air empty and a plate seals its window, ordinary and -forcegoodtree",
+                  self.whole_thin_brushes)
         self.report["verdict"] = "pass"
 
 
@@ -455,7 +496,7 @@ def main():
         acceptance.report["archive_sha256"] = acceptance.package.get("sha256")
         write_json(args.report, acceptance.report)
     passed = acceptance.report["verdict"] == "pass"
-    log("\nverdict: %s (%d/%d steps passed)" % (acceptance.report["verdict"], sum(s["status"] == "pass" for s in acceptance.steps), 9))
+    log("\nverdict: %s (%d/%d steps passed)" % (acceptance.report["verdict"], sum(s["status"] == "pass" for s in acceptance.steps), ACCEPTANCE_STEPS))
     sys.exit(0 if passed else 1)
 
 

@@ -20,7 +20,7 @@ import pathlib
 import sys
 import tempfile
 
-from common import HERE, PLATFORMS, REQUIRED_PLATFORMS, Failure, load_json, log, run, sha256_file, write_json
+from common import ACCEPTANCE_STEPS, HERE, PLATFORMS, REQUIRED_PLATFORMS, Failure, load_json, log, run, sha256_file, write_json
 
 LABELS = {"linux-amd64": "Linux x86-64", "windows-amd64": "Windows x86-64", "macos-amd64": "macOS Intel (x86-64)",
           "macos-arm64": "macOS Apple silicon (arm64)"}
@@ -56,8 +56,9 @@ def evaluate(platform, plan, artifacts):
             raise Failure("%s: %s is %r, expected %r" % (platform, label, got, want))
     if not package.get("releasable"):
         raise Failure("%s: the archive is marked not releasable" % platform)
-    if not all(step["status"] == "pass" for step in report["steps"]) or len(report["steps"]) < 9:
-        raise Failure("%s: the acceptance report says pass but not all nine steps passed" % platform)
+    if not all(step["status"] == "pass" for step in report["steps"]) or len(report["steps"]) != ACCEPTANCE_STEPS:
+        raise Failure("%s: the acceptance report says pass but has %d passed steps of the %d the acceptance runs"
+                      % (platform, sum(step["status"] == "pass" for step in report["steps"]), ACCEPTANCE_STEPS))
     full = package["tests"]["full"]
     return {"platform": platform, "name": asset, "path": str(zip_path), "size": zip_path.stat().st_size, "sha256": digest,
             "kind": "toolchain", "acceptance": {"verdict": "pass", "steps_passed": len(report["steps"]),
@@ -91,14 +92,22 @@ def notes(plan, accepted, missing, source, run_url):
         "`testmapsQ1.sliverFragmentPhantomSolid`, `testmapsQ1.fragmentLeafOutsideBrush` and, for the material that must stay, "
         "`testmapsQ1.leafGuardKeepsMaterial`.",
         "",
+        "After release 1.4513, `SplitBrush` and `CheckSplitBrush` also share one test of the cap a plane cuts out of a brush: it must "
+        "have an interior (wider than `PLANESIDE_EPSILON`, 0.001 units), where both used to want three edges longer than 0.02. "
+        "A whole brush thinner than 0.02 units is now cut out of the slab it lies in. Up to release 1.4513 a free fin 0.012 "
+        "thick made half of its room solid with no leak and exit 0, and a plate 0.012 thick that alone closed a window was "
+        "reported as a leak. Tests `testmapsQ1.sub002FreeFin`, `testmapsQ1.sub002PlateSealsWindow` and seven more named "
+        "`sub002*`; the archive acceptance asks both maps of every published target. The one face of a 712-brush hollow pipe "
+        "that release 1.4513 left partly missing without `-forcegoodtree` is drawn too.",
+        "",
         "### Known limits",
         "",
-        "- **A whole brush thinner than 0.02 units is not compiled correctly.** Its side planes cannot split the slab it lies in "
-        "(the cut would be a winding thinner than 0.02), so the slab stays one leaf: a plate that thin which is the only thing "
-        "closing a hole is reported as a leak, and a free fin or skin that thin can become a sheet that divides the room, with "
-        "exit 0. At 0.0201 units and above, and for thinner *fragments* of thicker brushes, the measured cases are right. "
-        "Reproducers: `testmaps/q1_brushbsp_sub002_plate_seals_window.map`, `testmaps/q1_brushbsp_sub002_free_fin.map`.",
-        "- Without `-forcegoodtree`, 1 of 1,248 exposed faces of one 712-brush hollow pipe is still partly missing; with it, none.",
+        "- **A whole brush thinner than 0.001 units is dropped**: no material, and no solid in the map's air either; a room "
+        "only such a brush seals is reported as a leak. From 0.00101 units up the measured cases are compiled exactly.",
+        "- Where two slabs thinner than 0.2 units cross (two fins 0.012 thick at right angles), the 0.012 x 0.012 column they "
+        "share is filled as unreachable: solid in the point hull where the map has air, nothing drawn. Both fins and the room "
+        "are right.",
+        "- A brush of zero thickness crashes `qbsp` in the clip hulls, as upstream 2.0.0-alpha11 does.",
         "- The default T-junction mode can give a drawn face a 0.03-unit spike, as upstream does.",
         "",
         "### Downloads",
