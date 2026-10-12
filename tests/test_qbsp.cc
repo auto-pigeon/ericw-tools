@@ -3209,6 +3209,64 @@ TEST(testmapsQ1, cliphullBevelDuplicatesFace)
     }
 }
 
+TEST(testmapsQ1, sliverFragmentPhantomSolid)
+{
+    // SplitBrush splits off a brush fragment thinner than 0.1 (see cliphull2ThinFragmentSplit), so
+    // CheckSplitBrush must accept the planes that bound such a fragment: if it refuses every plane
+    // that would cut the node volume thinner than 0.1, the fragment is never carved out of its
+    // node, and the whole leaf it ends up in becomes solid. That leaf is air above the pipe here
+    // (hull 0 only; the clip hulls were not affected), and the faces under it are not drawn.
+    // Exit status 0 and "no leak" both held while this was broken, so neither is tested alone.
+    // -tjunc none, as in cliphull2ThinFragmentSplit: with the default (mwt) two of the cells' faces
+    // get a 0.03-unit spike (a vertex visited twice), which CheckBsp reports. Upstream alpha11
+    // writes the same spikes on this map; they are not what is tested here.
+    for (const std::vector<std::string> &extra_args : {std::vector<std::string>{"-leaktest", "-tjunc", "none"},
+             std::vector<std::string>{"-leaktest", "-tjunc", "none", "-forcegoodtree"}}) {
+        SCOPED_TRACE(extra_args.back());
+
+        // -leaktest throws if any hull leaks
+        const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_brushbsp_sliver_fragment_phantom_solid.map", extra_args);
+        const dmodelh2_t *world = &bsp.dmodels[0];
+
+        // the centre of each of the four cells, 6 units inside every one of its planes
+        for (const qvec3d &inside : {qvec3d{1715.368212, -455.716266, -159.996169},
+                 qvec3d{1727.354891, -454.583845, -159.980881}, qvec3d{1739.181895, -452.329045, -159.950439},
+                 qvec3d{1750.744349, -448.971860, -159.905115}}) {
+            SCOPED_TRACE(fmt::format("inside {}", inside));
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindLeafAtPoint(&bsp, world, inside)->contents);
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 1, world, inside));
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 2, world, inside));
+        }
+
+        // air: 2 units above the top face of cells 1, 2 and 3 along that face's own normal, and two
+        // points 2.5 units from every brush beside cell 0. No brush of the map contains any of them.
+        for (const qvec3d &air : {qvec3d{1727.292385, -454.588701, -127.071320},
+                 qvec3d{1739.078334, -452.341728, -127.040984}, qvec3d{1750.600651, -448.996197, -126.995817},
+                 qvec3d{1721.72, -458.54, -126.54}, qvec3d{1721.72, -456.54, -126.54}}) {
+            SCOPED_TRACE(fmt::format("air {}", air));
+            EXPECT_EQ(CONTENTS_EMPTY, BSP_FindLeafAtPoint(&bsp, world, air)->contents);
+        }
+
+        // the top face of cells 1, 2 and 3 is drawn where the map puts it: centroid and outward normal
+        // of the source polygon. (cell 0's is the control: it was drawn while the others were not.)
+        const std::pair<qvec3d, qvec3d> tops[] = {
+            {{1715.348587, -455.717191, -129.086556}, {-0.000636, 0.000000, 1.000000}},
+            {{1727.296191, -454.588461, -129.071317}, {-0.001903, -0.000120, 0.999998}},
+            {{1739.084641, -452.341012, -129.040974}, {-0.003153, -0.000358, 0.999995}},
+            {{1750.609402, -448.994771, -128.995797}, {-0.004376, -0.000713, 0.999990}}};
+        for (const auto &[foot, normal] : tops) {
+            SCOPED_TRACE(fmt::format("top face at {}", foot));
+            EXPECT_NE(nullptr, BSP_FindFaceAtPoint(&bsp, world, foot, normal));
+        }
+
+        // the player start is in the open room in every hull
+        const qvec3d player_start{-3976, 599, -287};
+        EXPECT_EQ(CONTENTS_EMPTY, BSP_FindLeafAtPoint(&bsp, world, player_start)->contents);
+        EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 1, world, player_start));
+        EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 2, world, player_start));
+    }
+}
+
 TEST(testmapsQ1, leaktest)
 {
     auto l = []() {
