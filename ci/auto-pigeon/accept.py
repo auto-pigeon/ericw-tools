@@ -39,6 +39,26 @@ THIN_PROBES = (
     (1, (-105.055035, -702.129458, -4.023305), "EMPTY", "the light, hull 1"),
     (2, (-105.055035, -702.129458, -4.023305), "EMPTY", "the light, hull 2"),
 )
+# Hull 0 air and solid of the two sliver-fragment reproducers (see tests/test_qbsp.cc sliverFragmentPhantomSolid and
+# fragmentLeafOutsideBrush). Both maps sealed and qbsp exited 0 while these air points read SOLID, so sealing is not asked alone.
+AIR_MAPS = (
+    ("q1_brushbsp_sliver_fragment_phantom_solid.map", (
+        ((0, 1, 2), (1727.354891, -454.583845, -159.980881), "SOLID", "the centre of a pipe cell"),
+        ((0,), (1727.292385, -454.588701, -127.071320), "EMPTY", "air 2 units above the top face of cell 1"),
+        ((0,), (1739.078334, -452.341728, -127.040984), "EMPTY", "air 2 units above the top face of cell 2"),
+        ((0,), (1750.600651, -448.996197, -126.995817), "EMPTY", "air 2 units above the top face of cell 3"),
+        ((0,), (1721.72, -458.54, -126.54), "EMPTY", "air 2.5 units from every brush, beside cell 0"),
+        ((0, 1, 2), (-3976, 599, -287), "EMPTY", "player start"),
+    )),
+    ("q1_brushbsp_fragment_leaf_outside_brush.map", (
+        ((0, 1, 2), (1750.744349, -448.971860, -159.905115), "SOLID", "the centre of a pipe cell"),
+        # 230 units from the nearest brush; releases 1.4502 / 1.4505 read both SOLID
+        ((0,), (2503.88, 188.27, -120.51), "EMPTY", "open air 230 units from every brush"),
+        ((0,), (2503.88, 182.27, -120.51), "EMPTY", "open air 230 units from every brush, 6 units along"),
+        ((0,), (1744.848036, -432.155936, -128.067913), "EMPTY", "air a unit above where a sheet of solid was drawn"),
+        ((0,), (1744.848036, -432.155936, -130.067913), "EMPTY", "air a unit below where a sheet of solid was drawn"),
+    )),
+)
 ROOM_PROBES = (
     ((0, 1, 2), (-160, -96, 32), "EMPTY", "player start"),
     # 64 units under the ceiling: open to the point and player hulls, and exactly on the expanded
@@ -355,6 +375,28 @@ class Acceptance:
             results[mode] = {"bsp_sha256": sha256_file(d / (base + ".bsp")), "probes": probes}
         return results
 
+    def sliver_fragments(self):
+        results = {}
+        for map_name, wanted in AIR_MAPS:
+            base = map_name[:-len(".map")]
+            for mode, extra in (("ordinary", []), ("forcegoodtree", ["-forcegoodtree"])):
+                d = self.case_dir("case-%s-%s" % (base, mode), [(REPO / "testmaps" / map_name, map_name), (self.wad, "deprecated/free_wad.wad")])
+                # -tjunc none: the same isolation of the unrelated T-junction spike as the thin-fragment case
+                self.tool("qbsp", ["-leaktest", "-tjunc", "none", *extra, d / map_name], self.work / "unrelated cwd", label="%s-%s" % (base, mode))
+                ok, reasons = self.judge_sealed(d, base)
+                if not ok:
+                    raise Failure("%s (%s): %s" % (base, mode, "; ".join(reasons)))
+                bsp = Bsp(d / (base + ".bsp"))
+                probes = []
+                for hulls, point, want, what in wanted:
+                    for hull in hulls:
+                        got = bsp.contents_name(hull, point)
+                        probes.append({"hull": hull, "point": point, "what": what, "contents": got})
+                        if got != want:
+                            raise Failure("%s (%s): hull %d at %s (%s) is %s, expected %s" % (base, mode, hull, point, what, got, want))
+                results["%s/%s" % (base, mode)] = {"bsp_sha256": sha256_file(d / (base + ".bsp")), "probes": probes}
+        return results
+
     def run_all(self):
         require_native(self.platform)
         if self.work.exists() and any(self.work.iterdir()):
@@ -370,6 +412,7 @@ class Acceptance:
         self.step("4. the same room from a path and working directory with spaces", self.sealed_room_with_spaces)
         self.step("5. negative control: the room with a missing wall leaks and is refused", self.negative_control)
         self.step("6. thin-fragment reproducer, ordinary and -forcegoodtree, hulls 0-2", self.thin_fragment)
+        self.step("7. sliver-fragment reproducers: no solid in the map's air, ordinary and -forcegoodtree", self.sliver_fragments)
         self.report["verdict"] = "pass"
 
 

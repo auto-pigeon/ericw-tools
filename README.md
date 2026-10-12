@@ -1,10 +1,22 @@
 ## Auto-Pigeon fork of ericw-tools
 
 This repository is the **Auto-Pigeon fork** of [ericwa/ericw-tools](https://github.com/ericwa/ericw-tools).
-It follows upstream `main` and adds one compiler change, which upstream has not reviewed or accepted:
-`qbsp`'s `SplitBrush` splits thin brush fragments with `PLANESIDE_EPSILON` instead of `0.1`, closing a
-clip-hull leak through valid thin geometry (regression test `testmapsQ1.cliphull2ThinFragmentSplit`).
-The branch `fix/thin-brush-splits` holds exactly that change on top of upstream, for an upstream pull request.
+It follows upstream `main` and adds these compiler changes, which upstream has not reviewed or accepted:
+
+- `qbsp`'s `SplitBrush` splits thin brush fragments with `PLANESIDE_EPSILON` instead of `0.1`, closing a
+  clip-hull leak through valid thin geometry (`testmapsQ1.cliphull2ThinFragmentSplit`). The branch
+  `fix/thin-brush-splits` holds exactly that change on top of upstream, for an upstream pull request.
+- `AddBrushBevels` recognises a bevel that is one of the brush's own faces (`testmapsQ1.cliphullBevelDuplicatesFace`).
+- `CheckSplitBrush` tests the node volume with `SplitBrush`'s tolerances. The first change alone (releases 1.4502 and
+  1.4505) left a sliver's whole leaf SOLID: solid in the map's air beside non-planar geometry and the faces behind it not
+  drawn, with no leak and exit 0 (`testmapsQ1.sliverFragmentPhantomSolid`).
+- `LeafNode` gives a leaf a brush's contents only when the middle of the leaf is inside that brush, so a fragment that
+  cannot be carved any further no longer makes a sheet of solid in open air (`testmapsQ1.fragmentLeafOutsideBrush`).
+  Upstream 2.0.0-alpha11 has milder forms of the same defect, which this removes on the maps measured.
+
+Known and not changed: with the default T-junction mode a drawn face can get a 0.03-unit spike (a vertex visited
+twice); upstream writes the same. On one 712-brush hollow pipe, without `-forcegoodtree`, 1 of 1,248 exposed faces is
+still partly missing (upstream: 17, and 101 grid points of solid in air).
 Everything below this section is upstream's own README.
 
 ### Downloads

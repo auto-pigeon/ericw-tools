@@ -82,6 +82,13 @@ def notes(plan, accepted, missing, source, run_url):
         "`testmapsQ1.cliphull2ThinFragmentSplit` and its map are part of the source. This fixes that defect; it is not a claim "
         "that every map now compiles.",
         "",
+        "Two follow-ups keep that change from putting solid where the map has air. `CheckSplitBrush` decides with the same "
+        "tolerance whether a plane may split the node volume, so the planes bounding such a sliver are no longer refused "
+        "(releases 1.4502 and 1.4505 left the sliver's whole leaf solid: solid air beside non-planar geometry, the faces behind "
+        "it not drawn, no leak and exit 0). And `LeafNode` gives a leaf a brush's contents only when the middle of the leaf is "
+        "inside that brush, which also removes sheets of solid upstream 2.0.0-alpha11 leaves in the same places. Tests "
+        "`testmapsQ1.sliverFragmentPhantomSolid` and `testmapsQ1.fragmentLeafOutsideBrush`.",
+        "",
         "### Downloads",
         "",
         "| Target | Archive | Native tests | Accepted from the extracted ZIP |",
