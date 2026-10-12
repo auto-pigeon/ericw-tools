@@ -3267,6 +3267,55 @@ TEST(testmapsQ1, sliverFragmentPhantomSolid)
     }
 }
 
+TEST(testmapsQ1, fragmentLeafOutsideBrush)
+{
+    // a brush fragment gives a leaf its contents only if the leaf is in the brush. Here a fragment a
+    // hundredth of a unit thick is left in a leaf that no plane can split any further (the cut
+    // would be a winding thinner than 0.02) and that reaches 57 units past the fragment's brush:
+    // making that leaf solid puts a sheet of solid in open air above the cells, with a face drawn
+    // on each side of it. Nothing leaks and qbsp exits 0, so what is asked is what is drawn.
+    // -tjunc none: see sliverFragmentPhantomSolid.
+    for (const std::vector<std::string> &extra_args : {std::vector<std::string>{"-leaktest", "-tjunc", "none"},
+             std::vector<std::string>{"-leaktest", "-tjunc", "none", "-forcegoodtree"}}) {
+        SCOPED_TRACE(extra_args.back());
+
+        // -leaktest throws if any hull leaks
+        const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_brushbsp_fragment_leaf_outside_brush.map", extra_args);
+        const dmodelh2_t *world = &bsp.dmodels[0];
+
+        // the centre of each of the five cells, more than 5 units inside every one of its planes
+        for (const qvec3d &inside : {qvec3d{1739.181895, -452.329045, -159.950439},
+                 qvec3d{1750.744349, -448.971860, -159.905115}, qvec3d{1782.836262, -432.630905, -159.684499},
+                 qvec3d{1792.352129, -425.255171, -159.584920}, qvec3d{2701.680670, 427.198527, -148.079890}}) {
+            SCOPED_TRACE(fmt::format("inside {}", inside));
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindLeafAtPoint(&bsp, world, inside)->contents);
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 1, world, inside));
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 2, world, inside));
+        }
+
+        // two points in open air, 4.7 units from the nearest brush along the normal of the cell face
+        // below them: where the sheet was. No face of any kind is drawn there.
+        for (const qvec3d &air : {qvec3d{1744.848036, -432.155936, -129.067913},
+                 qvec3d{1772.348886, -418.114821, -128.819933}}) {
+            SCOPED_TRACE(fmt::format("air {}", air));
+            EXPECT_TRUE(BSP_FindFacesAtPoint(&bsp, world, air).empty());
+            EXPECT_EQ(CONTENTS_EMPTY, BSP_FindLeafAtPoint(&bsp, world, air + qvec3d{0, 0, 1})->contents);
+            EXPECT_EQ(CONTENTS_EMPTY, BSP_FindLeafAtPoint(&bsp, world, air - qvec3d{0, 0, 1})->contents);
+        }
+
+        // and the faces of the cells under it are drawn where the map puts them
+        const std::pair<qvec3d, qvec3d> faces[] = {
+            {{1735.495854, -437.327789, -133.188041}, {-0.119482, 0.486289, 0.865590}},
+            {{1745.629733, -434.385394, -133.148316}, {-0.165789, 0.472844, 0.865409}},
+            {{1773.756598, -420.063411, -132.954958}, {-0.294316, 0.407399, 0.864525}},
+            {{1782.096752, -413.598970, -132.867683}, {-0.332426, 0.377860, 0.864127}}};
+        for (const auto &[foot, normal] : faces) {
+            SCOPED_TRACE(fmt::format("cell face at {}", foot));
+            EXPECT_NE(nullptr, BSP_FindFaceAtPoint(&bsp, world, foot, normal));
+        }
+    }
+}
+
 TEST(testmapsQ1, leaktest)
 {
     auto l = []() {
