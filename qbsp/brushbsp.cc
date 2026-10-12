@@ -22,6 +22,7 @@
 #include <qbsp/brushbsp.hh>
 
 #include <climits>
+#include <cmath>
 
 #include <common/log.hh>
 #include <qbsp/brush.hh>
@@ -356,10 +357,11 @@ static void LeafNode(node_t *leafnode, bspbrush_t::container brushes, bspstats_t
     auto *leafdata = leafnode->get_leafdata();
 
     // a brush fragment gives a leaf its contents only if the leaf is in the brush. When no plane of
-    // the fragment can split the node volume any further (CheckSplitBrush: the cut would be a
-    // winding thinner than 0.02), a fragment a hundredth of a unit thick is left in a leaf that
-    // reaches tens of units past the brush it came from, and the old rule made all of that leaf
-    // solid: a sheet of solid in open air, drawn on both sides. The leaf's own middle decides:
+    // the fragment can split the node volume any further (CheckSplitBrush refuses it: the fragment
+    // does not reach PLANESIDE_EPSILON past the plane, or the cut has no interior), a fragment a
+    // thousandth of a unit thick is left in a leaf that reaches tens of units past the brush it came
+    // from, and the old rule made all of that leaf solid: a sheet of solid in open air, drawn on both
+    // sides. The leaf's own middle decides:
     // inside the fragment's original brush (LEAF_IN_BRUSH_EPSILON, map units) the brush owns the leaf, as
     // before; outside it the leaf is not that brush's.
     std::optional<qvec3d> middle;
@@ -397,6 +399,86 @@ static void LeafNode(node_t *leafnode, bspbrush_t::container brushes, bspstats_t
 }
 
 //============================================================
+
+/*
+================
+SplitCapIsDegenerate
+
+The cap is the polygon a split plane cuts out of a convex brush: the face the two halves would
+share. Returns true when that polygon has no interior, so the plane does not divide the brush into
+two volumes: fewer than three points, a coordinate that is not a number, every point at one place,
+or every point on one line.
+
+"On one line" is measured as the cap's WIDTH, in map units: the greatest distance of any of its
+points from the line through its two farthest-apart points. The bound is PLANESIDE_EPSILON, the one
+tolerance SplitBrush already uses to decide that a brush reaches past a plane at all and to clip the
+cap with: a cap no wider than that is not told apart from an edge of the brush. So one number says
+how thin a brush may be. From PLANESIDE_EPSILON up (measured from 0.00101) a whole brush is carved
+out of the slab it lies in; below it the brush does not reach past its own far plane, is never cut
+out, and LeafNode's leaf-in-brush rule drops it: no material, and no sheet of solid either. (With
+twice that bound a brush between 0.001 and 0.002 thick was still left as a sheet from wall to wall.)
+
+This replaced WindingIsTiny(w, 0.02), which counted edges: it wants three edges longer than 0.02 and
+so called a strip 0.012 wide and 500 long "tiny". That strip is the cap a side plane of a brush
+0.012 thick cuts out of the slab the brush lies in; refusing it left the slab one leaf from wall to
+wall (testmapsQ1.sub002FreeFin, sub002PlateSealsWindow). Length of edge says whether vertex snapping
+would crunch a face, which is a question about faces. Whether a cut makes two volumes is a question
+about the cap having an interior, and after it about the halves themselves, which SplitBrush and
+CheckSplitBrush both go on to build and check (sides, bounds, world extent, volume).
+
+SplitBrush and CheckSplitBrush MUST ask this of the same cap in the same way: CheckSplitBrush
+predicts, for the node volume, what SplitBrush will do to it.
+================
+*/
+constexpr double SPLIT_CAP_MIN_WIDTH = PLANESIDE_EPSILON;
+
+template<typename T>
+static bool SplitCapIsDegenerate(const T &w)
+{
+    const size_t count = w.size();
+    if (count < 3) {
+        return true;
+    }
+    for (size_t i = 0; i < count; i++) {
+        for (size_t j = 0; j < 3; j++) {
+            if (!std::isfinite(w[i][j])) {
+                return true;
+            }
+        }
+    }
+
+    // the two points farthest apart, near enough: the farthest from the first point, then the
+    // farthest from that one. For a convex polygon the second distance is at least half its diameter.
+    auto farthest_from = [&](size_t from) {
+        size_t best = from;
+        double best_distance = 0;
+        for (size_t i = 0; i < count; i++) {
+            const double distance = qv::distance2(w[i], w[from]);
+            if (distance > best_distance) {
+                best_distance = distance;
+                best = i;
+            }
+        }
+        return best;
+    };
+    const size_t a = farthest_from(0);
+    const size_t b = farthest_from(a);
+    const qvec3d along = w[b] - w[a];
+    const double length = qv::length(along);
+    if (length <= SPLIT_CAP_MIN_WIDTH) {
+        return true; // all of it is within the tolerance of one point
+    }
+
+    const qvec3d direction = along / length;
+    for (size_t i = 0; i < count; i++) {
+        const qvec3d offset = w[i] - w[a];
+        const qvec3d across = offset - direction * qv::dot(offset, direction);
+        if (qv::length2(across) > SPLIT_CAP_MIN_WIDTH * SPLIT_CAP_MIN_WIDTH) {
+            return false;
+        }
+    }
+    return true;
+}
 
 /*
 ==================
@@ -478,7 +560,7 @@ static twosided<bspbrush_t::ptr> SplitBrush(
         w = w->clip_back(face.get_plane(), PLANESIDE_EPSILON);
     }
 
-    if (!w || WindingIsTiny(*w, 0.02)) { // the brush isn't really split
+    if (!w || SplitCapIsDegenerate(*w)) { // the brush isn't really split
         planeside_t side = BrushMostlyOnSide(*brush, split);
         if (side == SIDE_FRONT)
             result.front = std::move(brush);
@@ -717,7 +799,7 @@ static bool CheckSplitBrush(const bspbrush_t::ptr &brush, size_t planenum)
         w = w->clip_back(face.get_plane(), PLANESIDE_EPSILON);
     }
 
-    if (!w || WindingIsTiny(*w, 0.02)) { // the brush isn't really split
+    if (!w || SplitCapIsDegenerate(*w)) { // the brush isn't really split: SplitBrush's own test
         return false;
     }
 
