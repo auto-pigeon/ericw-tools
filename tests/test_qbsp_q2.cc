@@ -390,6 +390,164 @@ TEST(testmapsQ2, nodrawLight)
     EXPECT_EQ(texinfo->flags.native_q2, (Q2_SURF_LIGHT | Q2_SURF_NODRAW));
 }
 
+/**
+ * Every key/value line of every entity reaches the entity lump where the .map wrote it. Quake II's
+ * ED_ParseEdict applies the lines in order and "angle" and "angles" set the same field, so the teleporter
+ * destination faces 195 only while its last "angle" stays after "angles"; qbsp used to keep a repeated
+ * key at its FIRST position with its LAST value ("angle" "195", "angles" "0 90 0"), which Yamagi Quake II
+ * 8.70 spawns facing 90 (Q2_005A). Case variants are different lines, team values keep their spelling,
+ * up/down movers keep -1/-2, and the keys the tools write (model, a switchable light's style) are the
+ * effective ones. LIGHT parses and rewrites the lump, so it is read after VIS and LIGHT as well.
+ */
+TEST(testmapsQ2, orderedRepeatedKeys)
+{
+    {
+        SCOPED_TRACE("qbsp");
+        const auto [bsp, bspx, prt] = LoadTestmapQ2("q2_ordered_repeated_keys.map");
+        EXPECT_EQ(bsp.dentdata, fmt::format(R"({{
+"mapversion" "220"
+"classname" "worldspawn"
+"message" "first message"
+"sky" "unit1_"
+"message" "second message"
+}}
+{{
+"classname" "info_player_start"
+"origin" "-88 -112 120"
+}}
+{{
+"classname" "misc_teleporter_dest"
+"origin" "0 0 120"
+"angle" "0"
+"angles" "0 90 0"
+"angle" "195"
+}}
+{{
+"classname" "info_notnull"
+"origin" "32 0 120"
+"angles" "0 90 0"
+"angle" "195"
+"angles" "0 30 0"
+}}
+{{
+"classname" "target_speaker"
+"origin" "64 0 120"
+"noise" "world/amb1.wav"
+"targetname" "speaker"
+"noise" "world/amb2.wav"
+"attenuation" "1"
+}}
+{{
+"classname" "info_notnull"
+"origin" "96 0 120"
+"Angle" "90"
+"angle" "0"
+"targetname" "Door"
+"TargetName" "door"
+"team" "Slide"
+"team" "slide"
+}}
+{{
+"classname" "light"
+"origin" "72 -136 168"
+"style" "5"
+"light" "300"
+"targetname" "lamp"
+"style" "{}"
+}}
+{{
+"classname" "func_door"
+"angle" "90"
+"angle" "-1"
+"targetname" "lift"
+"model" "*1"
+}}
+{{
+"classname" "func_door"
+"angle" "-2"
+"targetname" "drop"
+"model" "*2"
+}}
+)", "6"));
+    }
+    {
+        SCOPED_TRACE("qbsp, vis, light: the switchable light's last style is the one LIGHT assigns");
+        const auto [bsp, bspx] = QbspVisLight_Q2("q2_ordered_repeated_keys.map", {}, runvis_t::yes);
+        EXPECT_EQ(bsp.dentdata, fmt::format(R"({{
+"mapversion" "220"
+"classname" "worldspawn"
+"message" "first message"
+"sky" "unit1_"
+"message" "second message"
+}}
+{{
+"classname" "info_player_start"
+"origin" "-88 -112 120"
+}}
+{{
+"classname" "misc_teleporter_dest"
+"origin" "0 0 120"
+"angle" "0"
+"angles" "0 90 0"
+"angle" "195"
+}}
+{{
+"classname" "info_notnull"
+"origin" "32 0 120"
+"angles" "0 90 0"
+"angle" "195"
+"angles" "0 30 0"
+}}
+{{
+"classname" "target_speaker"
+"origin" "64 0 120"
+"noise" "world/amb1.wav"
+"targetname" "speaker"
+"noise" "world/amb2.wav"
+"attenuation" "1"
+}}
+{{
+"classname" "info_notnull"
+"origin" "96 0 120"
+"Angle" "90"
+"angle" "0"
+"targetname" "Door"
+"TargetName" "door"
+"team" "Slide"
+"team" "slide"
+}}
+{{
+"classname" "light"
+"origin" "72 -136 168"
+"style" "5"
+"light" "300"
+"targetname" "lamp"
+"style" "{}"
+}}
+{{
+"classname" "func_door"
+"angle" "90"
+"angle" "-1"
+"targetname" "lift"
+"model" "*1"
+}}
+{{
+"classname" "func_door"
+"angle" "-2"
+"targetname" "drop"
+"model" "*2"
+}}
+)", "32"));
+
+        auto ents = EntData_Parse(bsp);
+        ASSERT_EQ(9, ents.size());
+        EXPECT_EQ("195", ents[2].get("angle"));
+        EXPECT_EQ("0 30 0", ents[3].get("angles"));
+        EXPECT_EQ("world/amb2.wav", ents[4].get("noise"));
+        EXPECT_EQ("32", ents[6].get("style"));
+    }
+}
+
 TEST(testmapsQ2, longTextureName)
 {
     // the .map contains a texture "long_folder_name_test/long_texture_name_test" (44 chars)

@@ -1,0 +1,9 @@
+// -aliasdef for q1_ordered_repeated_keys.map: the def fills the keys the entity does not write itself, and a key
+// the def repeats takes its last value (testmapsQ1.orderedRepeatedKeysAliasDef)
+misc_ordered_alias
+{
+"classname" "info_notnull"
+"noise" "first"
+"message" "from the def"
+"noise" "second"
+}

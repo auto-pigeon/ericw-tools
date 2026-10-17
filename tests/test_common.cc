@@ -13,6 +13,8 @@
 #include <common/bspfile_q2.hh>
 #include <common/imglib.hh>
 #include <common/settings.hh>
+#include <common/entdata.h>
+#include <common/parser.hh>
 #include <testmaps.hh>
 
 TEST(common, StripFilename)
@@ -829,4 +831,63 @@ TEST(entdict, getVec3f)
     EXPECT_EQ(qvec3f(0, 0, 0), test.get_vec3f("fail1"));
     EXPECT_EQ(qvec3f(0, 0, 0), test.get_vec3f("fail2"));
     EXPECT_EQ(qvec3f(0, 0, 0), test.get_vec3f("fail3"));
+}
+
+TEST(entdict, parseKeepsEveryOccurrenceInOrder)
+{
+    // a game applies an entity's key/value lines in order, so a repeated key and the lines between its
+    // occurrences are part of what the entity means: "angle" then "angles" then "angle" faces the last
+    // "angle". The dictionary keeps every line where it was written; a lookup answers with the last one.
+    parser_t p{R"({
+"classname" "misc_teleporter_dest"
+"angle" "0"
+"angles" "0 90 0"
+"angle" "195"
+"Angle" "7"
+})",
+        {}};
+    entdict_t dict(p);
+
+    EXPECT_EQ(dict.get_pairs(), (keyvalues_t{{"classname", "misc_teleporter_dest"}, {"angle", "0"},
+                                    {"angles", "0 90 0"}, {"angle", "195"}, {"Angle", "7"}}));
+    EXPECT_EQ("195", dict.get("angle"));
+    EXPECT_EQ("7", dict.get("Angle")); // keys are compared exactly; no spelling is folded or dropped
+    EXPECT_EQ(5, dict.size());
+}
+
+TEST(entdict, setRemoveRenameActOnTheEffectiveOccurrence)
+{
+    entdict_t dict{{"style", "5"}, {"light", "300"}, {"style", "6"}, {"_falloff", "1"}, {"_falloff", "2"}};
+
+    // set writes the value the game will read: the last occurrence, in its place
+    dict.set("style", "32");
+    EXPECT_EQ(dict.get_pairs(),
+        (keyvalues_t{{"style", "5"}, {"light", "300"}, {"style", "32"}, {"_falloff", "1"}, {"_falloff", "2"}}));
+    EXPECT_EQ("32", dict.get("style"));
+
+    // a new key is appended, as before
+    dict.set("origin", "0 0 0");
+    EXPECT_EQ(dict.get_pairs().back(), (keyvalue_t{"origin", "0 0 0"}));
+
+    // rename moves every occurrence, in order, to the end under the new name
+    dict.rename("_falloff", "delay");
+    EXPECT_EQ(dict.get_pairs(), (keyvalues_t{{"style", "5"}, {"light", "300"}, {"style", "32"}, {"origin", "0 0 0"},
+                                    {"delay", "1"}, {"delay", "2"}}));
+    EXPECT_EQ("2", dict.get("delay"));
+
+    // remove leaves no occurrence that a game would still read
+    dict.remove("style");
+    EXPECT_FALSE(dict.has("style"));
+    EXPECT_EQ(dict.get_pairs(), (keyvalues_t{{"light", "300"}, {"origin", "0 0 0"}, {"delay", "1"}, {"delay", "2"}}));
+}
+
+TEST(entdict, writeThenParseIsTheSameSequence)
+{
+    std::vector<entdict_t> ents{
+        entdict_t{{"classname", "info_notnull"}, {"angles", "0 90 0"}, {"angle", "195"}, {"angles", "0 30 0"}}};
+    const std::string lump = EntData_Write(ents);
+    EXPECT_EQ(lump, "{\n\"classname\" \"info_notnull\"\n\"angles\" \"0 90 0\"\n\"angle\" \"195\"\n\"angles\" \"0 30 0\"\n}\n");
+
+    parser_t p{lump, {}};
+    EXPECT_EQ(EntData_Parse(p), ents);
 }

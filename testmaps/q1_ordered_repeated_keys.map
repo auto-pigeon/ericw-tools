@@ -1,0 +1,62 @@
+// Game: Quake
+// Format: Valve
+// Repeated and interleaved entity keys must reach the BSP entity lump in the order the .map writes them: the
+// engine's ED_ParseEdict applies the lines in order ("angle" becomes "angles" "0 <yaw> 0"). Brush from
+// q1_cube.map. testmapsQ1.orderedRepeatedKeys reads the lump, from a normal compile and from -onlyents.
+// entity 0
+{
+"mapversion" "220"
+"classname" "worldspawn"
+"wad" "deprecated/free_wad.wad"
+"message" "first message"
+"_wateralpha" "0.5"
+"message" "second message"
+"_tb_def" "builtin:Quake.fgd"
+// brush 0
+{
+( 32 -256 112 ) ( 32 -255 112 ) ( 32 -256 113 ) orangestuff8 [ 0 1 0 -16 ] [ 0 0 -1 0 ] 0 1 1
+( 64 -240 96 ) ( 63 -240 96 ) ( 64 -240 97 ) orangestuff8 [ -1 0 0 16 ] [ 0 0 -1 0 ] 180 1 1
+( 64 -576 80 ) ( 64 -575 80 ) ( 63 -576 80 ) orangestuff8 [ 1 0 0 -16 ] [ 0 -1 0 16 ] 180 1 1
+( -16 -256 112 ) ( -17 -256 112 ) ( -16 -255 112 ) orangestuff8 [ -1 0 0 16 ] [ 0 -1 0 16 ] 180 1 1
+( -16 -144 112 ) ( -16 -144 113 ) ( -17 -144 112 ) orangestuff8 [ 1 0 0 -16 ] [ 0 0 -1 0 ] 180 1 1
+( 80 -576 96 ) ( 80 -576 97 ) ( 80 -575 96 ) orangestuff8 [ 0 -1 0 16 ] [ 0 0 -1 0 ] 0 1 1
+}
+}
+// entity 1
+{
+"classname" "info_player_start"
+"origin" "56 -208 136"
+}
+// entity 2
+{
+"classname" "info_teleport_destination"
+"origin" "56 -208 160"
+"angle" "0"
+"angles" "0 90 0"
+"angle" "195"
+"targetname" "dest"
+"Targetname" "Dest"
+}
+// entity 3
+{
+"classname" "func_door"
+"angle" "90"
+"angle" "-1"
+"targetname" "lift"
+"targetname" "lift2"
+// brush 0
+{
+( 32 -256 112 ) ( 32 -255 112 ) ( 32 -256 113 ) orangestuff8 [ 0 1 0 -16 ] [ 0 0 -1 0 ] 0 1 1
+( 32 -256 112 ) ( 32 -256 113 ) ( 33 -256 112 ) orangestuff8 [ 1 0 0 0 ] [ 0 0 -1 0 ] 0 1 1
+( 32 -256 112 ) ( 33 -256 112 ) ( 32 -255 112 ) orangestuff8 [ 1 0 0 0 ] [ 0 -1 0 0 ] 0 1 1
+( 48 -240 128 ) ( 48 -239 128 ) ( 49 -240 128 ) orangestuff8 [ 1 0 0 0 ] [ 0 -1 0 0 ] 0 1 1
+( 48 -240 128 ) ( 49 -240 128 ) ( 48 -240 129 ) orangestuff8 [ 1 0 0 0 ] [ 0 0 -1 0 ] 0 1 1
+( 48 -240 128 ) ( 48 -240 129 ) ( 48 -239 128 ) orangestuff8 [ 0 1 0 0 ] [ 0 0 -1 0 ] 0 1 1
+}
+}
+// entity 4
+{
+"classname" "misc_ordered_alias"
+"origin" "56 -208 180"
+"message" "own"
+}

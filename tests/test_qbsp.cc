@@ -3128,6 +3128,80 @@ TEST(testmapsQ1, dentdata)
 )");
 }
 
+TEST(testmapsQ1, orderedRepeatedKeys)
+{
+    // Quake's ED_ParseEdict applies an entity's lines in order (an "angle" line is turned into "angles"
+    // "0 <yaw> 0"), so a repeated key and the lines between its occurrences reach the lump as written,
+    // from a normal compile and from -onlyents. Keys are compared exactly: "Targetname" is its own line.
+    const std::string expected = R"({
+"mapversion" "220"
+"classname" "worldspawn"
+"wad" "deprecated/free_wad.wad"
+"message" "first message"
+"_wateralpha" "0.5"
+"message" "second message"
+}
+{
+"classname" "info_player_start"
+"origin" "56 -208 136"
+}
+{
+"classname" "info_teleport_destination"
+"origin" "56 -208 160"
+"angle" "0"
+"angles" "0 90 0"
+"angle" "195"
+"targetname" "dest"
+"Targetname" "Dest"
+}
+{
+"classname" "func_door"
+"angle" "90"
+"angle" "-1"
+"targetname" "lift"
+"targetname" "lift2"
+"model" "*1"
+}
+{
+"classname" "misc_ordered_alias"
+"origin" "56 -208 180"
+"message" "own"
+}
+)";
+    const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_ordered_repeated_keys.map");
+    {
+        SCOPED_TRACE("normal compile");
+        EXPECT_EQ(bsp.dentdata, expected);
+    }
+    {
+        SCOPED_TRACE("-onlyents into a copy of that BSP: the entity lump only, the same lines");
+        const auto compiled = std::filesystem::path(testmaps_dir) / "q1_ordered_repeated_keys.bsp";
+        const auto copy = std::filesystem::path(testmaps_dir) / "q1_ordered_repeated_keys_onlyents.bsp";
+        ASSERT_TRUE(std::filesystem::copy_file(compiled, copy, std::filesystem::copy_options::overwrite_existing));
+        const auto [onlyents, onlyents_bspx, onlyents_prt] = LoadTestmap(
+            std::filesystem::path(testmaps_dir) / "q1_ordered_repeated_keys.map", copy, {"-onlyents"});
+        EXPECT_EQ(onlyents.dentdata, expected);
+
+        // the geometry is the normal compile's, untouched
+        EXPECT_EQ(bsp.dfaces.size(), onlyents.dfaces.size());
+        EXPECT_EQ(bsp.dmodels.size(), onlyents.dmodels.size());
+        EXPECT_EQ(bsp.dvertexes, onlyents.dvertexes);
+        EXPECT_EQ(bsp.dsurfedges, onlyents.dsurfedges);
+    }
+}
+
+TEST(testmapsQ1, orderedRepeatedKeysAliasDef)
+{
+    // an alias def fills only the keys the entity did not write, decided against the entity as written: the
+    // def's repeated "noise" ends with its last value, and the entity's own "message" stays
+    const auto def = std::filesystem::path(testmaps_dir) / "q1_ordered_repeated_keys.def";
+    const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_ordered_repeated_keys.map", {"-aliasdef", def.string()});
+    auto ents = EntData_Parse(bsp);
+    ASSERT_EQ(5, ents.size());
+    EXPECT_EQ(ents[4].get_pairs(), (keyvalues_t{{"classname", "info_notnull"}, {"origin", "56 -208 180"},
+                                       {"message", "own"}, {"noise", "second"}}));
+}
+
 TEST(testmapsQ1, cliphull2ThinFragmentSplit)
 {
     // a hull 2 brush fragment that is thinner than 0.1 on one side of a split must still be
