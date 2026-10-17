@@ -916,7 +916,30 @@ qmat4x4f TexSpaceToWorld(const mbsp_t *bsp, const mface_t *f)
 
 // faceextents_t
 
-faceextents_t::faceextents_t(const mface_t &face, const mbsp_t &bsp, float lightmapshift)
+// a value rounded to float and kept there: the store/load stops a compiler from carrying excess precision or
+// fusing it into a multiply-add, on every target and with any -ffp-contract default
+static float RoundToFloat(float value)
+{
+    volatile float stored = value;
+    return stored;
+}
+
+// a texture coordinate as an engine computes it in float arithmetic (lmextents_t::float32)
+static qvec2f WorldToTexCoordFloat32(const qvec3f &world, const mtexinfo_t *tex)
+{
+    qvec2f result;
+    for (int axis = 0; axis < 2; axis++) {
+        const float x = RoundToFloat(world[0] * static_cast<float>(tex->vecs.at(axis, 0)));
+        const float y = RoundToFloat(world[1] * static_cast<float>(tex->vecs.at(axis, 1)));
+        const float z = RoundToFloat(world[2] * static_cast<float>(tex->vecs.at(axis, 2)));
+        const float xy = RoundToFloat(x + y);
+        const float xyz = RoundToFloat(xy + z);
+        result[axis] = RoundToFloat(xyz + static_cast<float>(tex->vecs.at(axis, 3)));
+    }
+    return result;
+}
+
+faceextents_t::faceextents_t(const mface_t &face, const mbsp_t &bsp, float lightmapshift, lmextents_t arithmetic)
 {
     worldToTexCoordMatrix = WorldToTexSpace(&bsp, &face);
     texCoordToWorldMatrix = TexSpaceToWorld(&bsp, &face);
@@ -925,7 +948,9 @@ faceextents_t::faceextents_t(const mface_t &face, const mbsp_t &bsp, float light
 
     for (int i = 0; i < face.numedges; i++) {
         const qvec3f &worldpoint = Face_PointAtIndex(&bsp, &face, i);
-        const qvec2f texcoord = Face_WorldToTexCoord(&bsp, &face, worldpoint);
+        const qvec2f texcoord = arithmetic == lmextents_t::float32
+                                    ? WorldToTexCoordFloat32(worldpoint, Face_Texinfo(&bsp, &face))
+                                    : Face_WorldToTexCoord(&bsp, &face, worldpoint);
 
 #ifdef PARANOID
         // self test
@@ -942,8 +967,14 @@ faceextents_t::faceextents_t(const mface_t &face, const mbsp_t &bsp, float light
 
     qvec2i lm_mins;
     for (int i = 0; i < 2; i++) {
-        tex_bounds[0][i] = floor(tex_bounds[0][i] / lightmapshift);
-        tex_bounds[1][i] = ceil(tex_bounds[1][i] / lightmapshift);
+        if (arithmetic == lmextents_t::float32) {
+            // the engine divides the float by the texel size in float (floor(mins / 16))
+            tex_bounds[0][i] = floor(RoundToFloat(static_cast<float>(tex_bounds[0][i]) / lightmapshift));
+            tex_bounds[1][i] = ceil(RoundToFloat(static_cast<float>(tex_bounds[1][i]) / lightmapshift));
+        } else {
+            tex_bounds[0][i] = floor(tex_bounds[0][i] / lightmapshift);
+            tex_bounds[1][i] = ceil(tex_bounds[1][i] / lightmapshift);
+        }
         lm_mins[i] = static_cast<int>(tex_bounds[0][i]);
         lm_extents[i] = static_cast<int>(tex_bounds[1][i] - tex_bounds[0][i]);
 

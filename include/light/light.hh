@@ -422,6 +422,7 @@ public:
     setting_int32 facestyles;
     setting_bool exportobj;
     setting_int32 lmshift;
+    setting_enum<lmextents_t> lmextents;
     setting_bool lightgrid;
     setting_vec3 lightgrid_dist;
     setting_enum<lightgrid_format_t> lightgrid_format;

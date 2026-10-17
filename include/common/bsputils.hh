@@ -149,6 +149,21 @@ struct world_units_per_luxel_t
 
 constexpr float LMSCALE_DEFAULT = 16.0f;
 
+// How a face's lightmap texel bounds are computed from its vertices and texinfo. A Quake/Quake II BSP stores no
+// lightmap size: the engine recomputes it, so the lighting is only read as written when the tools use the same
+// arithmetic as the engine that loads the map. At a vertex whose texture coordinate falls on a 16-unit texel
+// boundary the two answers can differ by a whole row or column.
+enum class lmextents_t
+{
+    // the sum of the products in extended precision, rounded once to float: the x87 engines the tools were
+    // written for (the default, as upstream)
+    extended,
+    // every product and every sum rounded to float, in the engine's order (s.x * v.x + s.y * v.y + s.z * v.z +
+    // offset), no fused multiply-add: 64-bit SSE builds of id's code, e.g. Yamagi Quake II 8.70's soft, GL1 and
+    // GL3 renderers (`Mod_CalcSurfaceExtents`, built with -mfpmath=sse -ffp-contract=off)
+    float32
+};
+
 class faceextents_t
 {
 public:
@@ -164,7 +179,7 @@ public:
 
     faceextents_t() = default;
 
-    faceextents_t(const mface_t &face, const mbsp_t &bsp, float lmshift);
+    faceextents_t(const mface_t &face, const mbsp_t &bsp, float lmshift, lmextents_t arithmetic = lmextents_t::extended);
     faceextents_t(
         const mface_t &face, const mbsp_t &bsp, uint16_t lmwidth, uint16_t lmheight, texvecf world_to_lm_space);
     faceextents_t(const mface_t &face, const mbsp_t &bsp, world_units_per_luxel_t tag, float world_units_per_luxel);

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <set>
+
 #include <light/light.hh>
 #include <light/ltface.hh>
 #include <light/surflight.hh>
@@ -269,6 +271,58 @@ TEST(worldunitsperluxel, lightgrids)
         EXPECT_EQ(qvec3b(0, 0, 0), colors[3]); // -y
         EXPECT_EQ(qvec3b(67, 93, 83), colors[4]); // +z
         EXPECT_EQ(qvec3b(0, 0, 0), colors[5]); // -z
+    }
+}
+
+// q2_lightmap_texel_boundary.map: two faces whose texture coordinate sits on a 16-unit lightmap texel boundary.
+// Extended arithmetic (the default) sizes block A's face 5 columns and block B's 8; float32 arithmetic, which is how
+// Yamagi Quake II 8.70's renderers size them on x86-64, 4 and 9. Whatever the arithmetic, LIGHT must write each face's
+// samples with the width it computed - the row length the engine reads with - inside the face's own allocation.
+static void CheckLightmapLayout(const mbsp_t &bsp, lmextents_t arithmetic, int width_a, int width_b)
+{
+    const mface_t *a = BSP_FindFaceAtPoint(&bsp, &bsp.dmodels[0], {-416, -64, 192}, {0, 1, 0});
+    const mface_t *b = BSP_FindFaceAtPoint(&bsp, &bsp.dmodels[0], {0, -64, 224}, {0, 1, 0});
+    ASSERT_NE(nullptr, a);
+    ASSERT_NE(nullptr, b);
+    EXPECT_EQ(width_a, faceextents_t(*a, bsp, LMSCALE_DEFAULT, arithmetic).width());
+    EXPECT_EQ(3, faceextents_t(*a, bsp, LMSCALE_DEFAULT, arithmetic).height());
+    EXPECT_EQ(width_b, faceextents_t(*b, bsp, LMSCALE_DEFAULT, arithmetic).width());
+    EXPECT_EQ(3, faceextents_t(*b, bsp, LMSCALE_DEFAULT, arithmetic).height());
+
+    std::set<int32_t> starts;
+    for (const mface_t &face : bsp.dfaces) {
+        if (face.lightofs != -1) {
+            starts.insert(face.lightofs);
+        }
+    }
+    const int32_t lump = static_cast<int32_t>(bsp.dlightdata.size());
+    for (const mface_t &face : bsp.dfaces) {
+        if (face.lightofs == -1) {
+            continue;
+        }
+        int styles = 0;
+        while (styles < 4 && face.styles[styles] != INVALID_LIGHTSTYLE_OLD) { // a Quake II face has 4 styles
+            styles++;
+        }
+        const int32_t bytes = faceextents_t(face, bsp, LMSCALE_DEFAULT, arithmetic).numsamples() * styles * 3;
+        const auto next = starts.upper_bound(face.lightofs);
+        const int32_t end = next == starts.end() ? lump : *next;
+        SCOPED_TRACE(fmt::format("face {}", Face_GetNum(&bsp, &face)));
+        EXPECT_LE(face.lightofs + bytes, end);
+    }
+}
+
+TEST(ltfaceQ2, lightmapTexelBoundary)
+{
+    {
+        SCOPED_TRACE("default (extended)");
+        auto [bsp, bspx] = QbspVisLight_Q2("q2_lightmap_texel_boundary.map", {});
+        CheckLightmapLayout(bsp, lmextents_t::extended, 5, 8);
+    }
+    {
+        SCOPED_TRACE("-lmextents float32");
+        auto [bsp, bspx] = QbspVisLight_Q2("q2_lightmap_texel_boundary.map", {"-lmextents", "float32"});
+        CheckLightmapLayout(bsp, lmextents_t::float32, 4, 9);
     }
 }
 

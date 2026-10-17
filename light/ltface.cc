@@ -703,9 +703,9 @@ static lightsurf_t Lightsurf_Init(const modelinfo_t *modelinfo, const settings::
                     faceextents_t(*face, *bsp, world_units_per_luxel_t{}, light_options.world_units_per_luxel.value());
             }
         } else {
-            lightsurf.extents = faceextents_t(*face, *bsp, lightsurf.lightmapscale);
+            lightsurf.extents = faceextents_t(*face, *bsp, lightsurf.lightmapscale, light_options.lmextents.value());
         }
-        lightsurf.vanilla_extents = faceextents_t(*face, *bsp, LMSCALE_DEFAULT);
+        lightsurf.vanilla_extents = faceextents_t(*face, *bsp, LMSCALE_DEFAULT, light_options.lmextents.value());
 
         CalcPoints(modelinfo, modelinfo->offset, &lightsurf, bsp, face);
 

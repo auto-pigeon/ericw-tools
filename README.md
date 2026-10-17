@@ -38,6 +38,15 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   (`testmapsQ2.orderedRepeatedKeys`, `testmapsQ1.orderedRepeatedKeys`, `testmapsQ1.orderedRepeatedKeysAliasDef`,
   `entdict.*`).
 
+- `light -lmextents float32` sizes every face's lightmap with float arithmetic in the engine's order (each product and
+  sum rounded to float, no fused multiply-add), which is how Yamagi Quake II 8.70's soft, GL1 and GL3 renderers size it
+  on x86-64. A Quake II BSP stores no lightmap size, so the engine recomputes it; at a vertex whose texture coordinate
+  lies on a 16-unit texel boundary the default (`extended`: an extended-precision sum rounded once, as upstream and as
+  x87 engines) can give one column or row more or fewer than the engine, which then reads the face's samples with the
+  wrong row length and, when it reads more, into the next face's samples. Measured on a BEND corridor compiled by
+  release 1.4518 (8 of 172 faces) and on `testmaps/q2_lightmap_texel_boundary.map` (`ltfaceQ2.lightmapTexelBoundary`).
+  The default is unchanged: choose the arithmetic of the engine that will load the map.
+
 #### Known limits
 
 - **A whole brush thinner than 0.001 units (`PLANESIDE_EPSILON`) is dropped.** It does not reach past its own far plane,
@@ -54,6 +63,12 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   and the outside filling takes it. Nothing is drawn there. `testmapsQ1.sub002CrossingFins` asserts everything around it
   and records the column's reading without asserting it. Changing that portal rule is what makes a map with hairline
   gaps between brushes leak, and it has not been done.
+- `-lmextents float32` follows the engine's float arithmetic, not its range limits, which no lightmap layout can satisfy:
+  Yamagi Quake II 8.70's GL renderers start a face's texture-coordinate bounds at 999999 / -99999 (soft: INT_MAX /
+  INT_MIN), so a face whose texture coordinates all lie past them is sized differently by its own renderers, and every
+  renderer keeps the lightmap origin (`texturemins`) in a 16-bit short, which wraps once a texture coordinate passes
+  +/-32767 (measured: an offset of 65536 gives origin 0). Keep texture offsets small; AUT's Quake II oracle reports such
+  faces by name.
 - A brush whose two opposite faces coincide (zero thickness) makes `qbsp` crash while it builds the clip hulls (exit by
   signal, no BSP), exactly as upstream 2.0.0-alpha11 does. The editor does not write such a brush.
 - With the default T-junction mode a drawn face can get a 0.03-unit spike (a vertex visited twice); upstream writes
