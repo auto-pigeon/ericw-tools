@@ -190,6 +190,88 @@ Creates a winding from the given node plane, clipped by all parent nodes.
 constexpr double BASE_WINDING_EPSILON = 0.001;
 constexpr double SPLIT_WINDING_EPSILON = 0.001;
 
+/*
+==================
+WindingMinWidth
+
+The least distance across a convex winding, in its own plane: for each edge, the farthest any point
+lies from the edge's line; the least of those. (For a convex polygon the minimum width is attained with
+an edge flush against one of the two parallel supporting lines.)
+==================
+*/
+static double WindingMinWidth(const winding_t &w)
+{
+    double best = std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i < w.size(); i++) {
+        const qvec3d edge = w[(i + 1) % w.size()] - w[i];
+        const double length = qv::length(edge);
+        if (length < NORMAL_EPSILON) {
+            continue;
+        }
+        const qvec3d dir = edge / length;
+        double farthest = 0;
+        for (size_t j = 0; j < w.size(); j++) {
+            farthest = std::max(farthest, qv::length(qv::cross(dir, w[j] - w[i])));
+        }
+        best = std::min(best, farthest);
+    }
+    return best;
+}
+
+/*
+==================
+ClipPortalWinding
+
+winding_t::clip with `epsilon`, except where the epsilon alone decides that the whole winding lies on one
+side while a finer clip finds a substantial part of it on the other side.
+
+The epsilon is a distance from the plane. When the plane meets the winding at a small dihedral angle
+theta (two nearly coplanar walls: a gently curved surface made of many brushes), every point within
+epsilon / theta of the intersection line is "on" -- 0.001 / 0.001 rad is a strip 1 unit wide. If the
+rest of the winding lies on one side (or the whole winding is "on"), the strip is moved to that side
+with it: the portal then bounds the wrong leaf there (typically a solid brush instead of the air in
+front of the wall), and the face that portal would have made is never emitted. Leaf contents, and so
+collision, are not affected; the wall just has an undrawn strip.
+
+The finer clip's verdict is taken only for pieces that are substantial: not tiny and at least
+EDGE_LENGTH_EPSILON wide. When both pieces are substantial the winding is split there; when only the
+piece on the side the epsilon left empty is, the whole winding goes to that side. Otherwise the
+epsilon's verdict stands, so no sliver, and no piece that the callers would drop as tiny, is made.
+==================
+*/
+constexpr double PORTAL_FINE_EPSILON = NORMAL_EPSILON;
+
+static bool PortalPieceIsSubstantial(const std::optional<winding_t> &w)
+{
+    return w && !WindingIsTiny(*w) && WindingMinWidth(*w) >= EDGE_LENGTH_EPSILON;
+}
+
+static twosided<std::optional<winding_t>> ClipPortalWinding(
+    const winding_t &w, const qplane3d &plane, double epsilon, bool keepon)
+{
+    auto result = w.clip(plane, epsilon, keepon);
+
+    if (result.front.has_value() == result.back.has_value()) {
+        return result;
+    }
+
+    auto fine = w.clip(plane, PORTAL_FINE_EPSILON, keepon);
+    const bool front = PortalPieceIsSubstantial(fine.front);
+    const bool back = PortalPieceIsSubstantial(fine.back);
+
+    if (front && back) {
+        return fine;
+    }
+    if (front && !result.front) {
+        return {w.clone(), std::nullopt};
+    }
+    if (back && !result.back) {
+        return {std::nullopt, w.clone()};
+    }
+
+    return result;
+}
+
 static std::optional<winding_t> BaseWindingForNode(const node_t *node)
 {
     std::optional<winding_t> w = BaseWindingForPlane<winding_t>(node->get_nodedata()->get_plane());
@@ -197,10 +279,12 @@ static std::optional<winding_t> BaseWindingForNode(const node_t *node)
     // clip by all the parents
     for (auto *np = node->parent; np && w;) {
 
+        auto clipped = ClipPortalWinding(*w, np->get_nodedata()->get_plane().get_plane(), BASE_WINDING_EPSILON, false);
+
         if (np->get_nodedata()->children[0] == node) {
-            w = w->clip_front(np->get_nodedata()->get_plane().get_plane(), BASE_WINDING_EPSILON, false);
+            w = std::move(clipped.front);
         } else {
-            w = w->clip_back(np->get_nodedata()->get_plane().get_plane(), BASE_WINDING_EPSILON, false);
+            w = std::move(clipped.back);
         }
 
         node = np;
@@ -297,7 +381,7 @@ static twosided<std::list<buildportal_t>> SplitNodePortals(
         //
         // cut the portal into two portals, one on each side of the cut plane
         //
-        auto [frontwinding, backwinding] = p.winding.clip(plane, SPLIT_WINDING_EPSILON, true);
+        auto [frontwinding, backwinding] = ClipPortalWinding(p.winding, plane.get_plane(), SPLIT_WINDING_EPSILON, true);
 
         if (frontwinding && WindingIsTiny(*frontwinding)) {
             frontwinding = {};

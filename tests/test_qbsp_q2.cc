@@ -1479,3 +1479,38 @@ TEST(testmapsQ2, emptyBmodels)
     EXPECT_THAT(
         get_current_test_log(), testing::Contains(testing::StartsWith("WARNING: brush has all faces marked 'skip'")));
 }
+
+TEST(testmapsQ2, bentWallPortalSplit)
+{
+    // Q2_012A. A room whose -Y wall is four convex cells, each 4 units wide, turning 0.0002 rad per cell
+    // (a gentle arc: wall y = -64 - c (x - 8)^2 at the cell corners x = 0, 4, 8, 12, 16, c = 0.0002 / 8),
+    // and whose +Y wall is its mirror image. Two neighbouring cells' wall planes meet at 0.0002 rad, so a
+    // portal on one of them lies within the portal epsilon (0.001) of the other's plane for 5 units: the
+    // portal split put whole cell-wide portals on the wrong side of the neighbour's plane, against a
+    // solid leaf instead of the room's air, and those cells' walls were never drawn (collision and leaf
+    // contents were right). Every cell's wall must be drawn where the map puts it.
+    const auto [bsp, bspx, prt] = LoadTestmapQ2("q2_bent_wall_portal_split.map");
+    const dmodelh2_t *world = &bsp.dmodels[0];
+
+    constexpr double theta = 0.0002, width = 4.0, c = theta / (2.0 * width), xmid = 8.0;
+    const auto wall_y = [&](double x) { return -64.0 - c * (x - xmid) * (x - xmid); };
+
+    for (const double side : {1.0, -1.0}) {
+        for (int cell = 0; cell < 4; cell++) {
+            const double x0 = cell * width, x1 = x0 + width;
+            const qvec3d a{x0, side * wall_y(x0), 0}, b{x1, side * wall_y(x1), 0};
+            // the wall's normal points into the room (+Y on the -Y wall, -Y on the mirror)
+            const qvec3d normal = qv::normalize(qvec3d{-(b[1] - a[1]), b[0] - a[0], 0} * side);
+            for (const double t : {0.15, 0.5, 0.85}) {
+                for (const double z : {16.0, 64.0, 112.0}) {
+                    const qvec3d point = a + (b - a) * t + qvec3d{0, 0, z};
+                    SCOPED_TRACE(fmt::format("wall {} cell {} point {}", side > 0 ? "-Y" : "+Y", cell, point));
+
+                    EXPECT_EQ(Q2_CONTENTS_EMPTY, BSP_FindLeafAtPoint(&bsp, world, point + normal * 0.5)->contents);
+                    EXPECT_EQ(Q2_CONTENTS_SOLID, BSP_FindLeafAtPoint(&bsp, world, point - normal * 0.5)->contents);
+                    EXPECT_NE(nullptr, BSP_FindFaceAtPoint(&bsp, world, point, normal));
+                }
+            }
+        }
+    }
+}

@@ -47,6 +47,17 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   release 1.4518 (8 of 172 faces) and on `testmaps/q2_lightmap_texel_boundary.map` (`ltfaceQ2.lightmapTexelBoundary`).
   The default is unchanged: choose the arithmetic of the engine that will load the map.
 
+- A portal split no longer moves a whole strip of a wall to the wrong side of a nearly coplanar plane. `SplitNodePortals`
+  and `BaseWindingForNode` clip with a 0.001 "on" epsilon; where a neighbouring cell's wall plane meets a portal at a
+  small dihedral angle theta, everything within 0.001 / theta of the line they share (a strip about 1 unit wide at
+  0.001 rad) was put on the side the rest of the winding lies on, so that strip's portal bounded a solid leaf instead of
+  the room's air and its face was never drawn (collision and leaf contents were right). `ClipPortalWinding` re-clips at
+  `NORMAL_EPSILON` only when the coarse clip put the whole winding on one side, and takes that verdict only for pieces
+  that are not tiny and at least `EDGE_LENGTH_EPSILON` wide, so it makes no sliver the callers would drop. Measured on a
+  Quake II AXIAL DEFORM corridor (an 0.8-unit undrawn strip on 4 cells, every release and upstream 2.0.0-alpha7/11) and
+  on a synthetic bent wall (`testmapsQ2.bentWallPortalSplit`: 54 points undrawn before, 0 after). The tiny-portal rule
+  itself is unchanged (see the crossing-fins limit below).
+
 #### Known limits
 
 - **A whole brush thinner than 0.001 units (`PLANESIDE_EPSILON`) is dropped.** It does not reach past its own far plane,
