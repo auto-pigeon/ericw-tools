@@ -49,10 +49,21 @@ public:
     int32_t get_vector(std::string_view key, qvec3f &out) const;
     // returns {0 0 0} if we couldn't parse exactly 3 components
     qvec3f get_vec3f(std::string_view key) const;
+    // Every key/value line is kept in the order it was added: a game applies an entity's lines in order, so a
+    // repeated key, and which lines come between its occurrences, is part of what the entity means (Quake II:
+    // "angle" "0", "angles" "0 90 0", "angle" "195" faces 195). Lookups answer with a key's LAST occurrence,
+    // the one the game ends up with; keys are compared exactly.
+
+    // updates the last occurrence in place, or appends the key
     void set(std::string_view key, std::string_view value);
+    // appends a line, whether or not the key is already present (parsing a .map or an entity lump)
+    void add(std::string_view key, std::string_view value);
+    // removes every occurrence
     void remove(std::string_view key);
+    // moves every occurrence, in order, to the end under the new name
     void rename(std::string_view from, std::string_view to);
 
+    // the last occurrence
     keyvalues_t::iterator find(std::string_view key);
     keyvalues_t::const_iterator find(std::string_view key) const;
 

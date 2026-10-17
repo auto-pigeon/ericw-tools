@@ -662,7 +662,7 @@ static void ParseEpair(parser_t &parser, map_entity_t &entity)
 
     parser.parse_token(PARSE_SAMELINE);
 
-    entity.epairs.set(key, parser.token);
+    entity.epairs.add(key, parser.token);
 }
 
 bool ParseEntity(parser_t &parser, map_entity_t &entity)

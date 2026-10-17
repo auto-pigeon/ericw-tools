@@ -29,6 +29,15 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   1,248 in both tree modes, which write the same BSP for it); that map's clip nodes grew from 67,778 to 83,972, while
   three smaller hollow pipes got fewer.
 
+- Every key/value line of an entity reaches the BSP entity lump where the `.map` wrote it, repeated keys included
+  (`entdict_t` keeps each line; a lookup answers with a key's LAST occurrence, which is what a game ends up with). Games
+  apply an entity's lines in order and `angle`/`angles` set one field, so `"angle" "0"`, `"angles" "0 90 0"`,
+  `"angle" "195"` must face 195; releases up to 1.4519 kept a repeated key at its FIRST position with its last value
+  (`"angle" "195"`, `"angles" "0 90 0"`, which Yamagi Quake II 8.70 spawns facing 90) and dropped the earlier
+  occurrences, so a `team` or `targetname` spelled twice lost one. LIGHT and `-onlyents` rewrite the lump the same way
+  (`testmapsQ2.orderedRepeatedKeys`, `testmapsQ1.orderedRepeatedKeys`, `testmapsQ1.orderedRepeatedKeysAliasDef`,
+  `entdict.*`).
+
 #### Known limits
 
 - **A whole brush thinner than 0.001 units (`PLANESIDE_EPSILON`) is dropped.** It does not reach past its own far plane,

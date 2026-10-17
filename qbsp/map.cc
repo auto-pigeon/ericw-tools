@@ -1748,8 +1748,11 @@ void ParseEntity(const mapfile::map_entity_t &in_entity, mapentity_t &entity, te
     auto alias_it = qbsp_options.loaded_entity_defs.find(entity.epairs.get("classname"));
 
     if (alias_it != qbsp_options.loaded_entity_defs.end()) {
+        // an alias fills the keys the entity did not have; decided against the entity as the map wrote it, so a
+        // key the alias def repeats takes the def's last value
+        const entdict_t written = entity.epairs;
         for (auto &pair : alias_it->second) {
-            if (pair.first == "classname" || !entity.epairs.has(pair.first)) {
+            if (pair.first == "classname" || !written.has(pair.first)) {
                 entity.epairs.set(pair.first, pair.second);
             }
         }

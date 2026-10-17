@@ -1081,7 +1081,7 @@ void map_entity_t::parse_entity_dict(parser_t &parser)
     }
 
     parser.parse_token(PARSE_SAMELINE);
-    epairs.set(key, parser.token);
+    epairs.add(key, parser.token);
 }
 
 void map_entity_t::parse_brush(parser_t &parser)

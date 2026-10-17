@@ -19,7 +19,9 @@
 
 #include <common/entdata.h>
 
+#include <algorithm>
 #include <cstdlib> // atoi()
+#include <iterator>
 
 #include <common/bsputils.hh>
 #include <common/parser.hh>
@@ -93,9 +95,8 @@ qvec3f entdict_t::get_vec3f(std::string_view key) const
 
 void entdict_t::set(std::string_view key, std::string_view value)
 {
-    // search for existing key to update
+    // update the occurrence a game reads: the last one, where it stands
     if (auto it = find(key); it != keyvalues.end()) {
-        // found existing key
         it->second = value;
         return;
     }
@@ -104,45 +105,53 @@ void entdict_t::set(std::string_view key, std::string_view value)
     keyvalues.emplace_back(key, value);
 }
 
+void entdict_t::add(std::string_view key, std::string_view value)
+{
+    // a line as the source wrote it: a repeated key is kept where it was, never merged into an earlier one
+    keyvalues.emplace_back(key, value);
+}
+
 void entdict_t::remove(std::string_view key)
 {
-    if (auto it = find(key); it != keyvalues.end()) {
-        keyvalues.erase(it);
-    }
+    std::erase_if(keyvalues, [&](const keyvalue_t &kv) { return kv.first == key; });
 }
 
 void entdict_t::rename(std::string_view from, std::string_view to)
 {
-    const auto it = find(from);
-    if (it != end()) {
-        auto oldValue = std::move(it->second);
-        keyvalues.erase(it);
-        keyvalues.emplace_back(to, std::move(oldValue));
+    // every occurrence moves to the end under the new name, in the order it had
+    keyvalues_t renamed;
+    std::erase_if(keyvalues, [&](keyvalue_t &kv) {
+        if (kv.first != from) {
+            return false;
+        }
+        renamed.emplace_back(to, std::move(kv.second));
+        return true;
+    });
+    for (auto &kv : renamed) {
+        keyvalues.push_back(std::move(kv));
     }
 }
 
+// a game applies an entity's lines in order, so a repeated key's value is its last occurrence's
+
 keyvalues_t::iterator entdict_t::find(std::string_view key)
 {
-    auto existingIt = keyvalues.end();
-    for (auto it = keyvalues.begin(); it != keyvalues.end(); ++it) {
+    for (auto it = keyvalues.rbegin(); it != keyvalues.rend(); ++it) {
         if (key == it->first) {
-            existingIt = it;
-            break;
+            return std::prev(it.base());
         }
     }
-    return existingIt;
+    return keyvalues.end();
 }
 
 keyvalues_t::const_iterator entdict_t::find(std::string_view key) const
 {
-    auto existingIt = keyvalues.end();
-    for (auto it = keyvalues.begin(); it != keyvalues.end(); ++it) {
+    for (auto it = keyvalues.rbegin(); it != keyvalues.rend(); ++it) {
         if (key == it->first) {
-            existingIt = it;
-            break;
+            return std::prev(it.base());
         }
     }
-    return existingIt;
+    return keyvalues.end();
 }
 
 bool entdict_t::has(std::string_view key) const
@@ -184,7 +193,7 @@ void entdict_t::parse(parser_base_t &parser)
             keystr.erase(keystr.cbegin());
         }
 
-        set(keystr, parser.token);
+        add(keystr, parser.token);
     }
 }
 void EntData_ParseInto(parser_t &parser, std::vector<entdict_t> &vector)
