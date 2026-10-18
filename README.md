@@ -57,6 +57,11 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   Quake II AXIAL DEFORM corridor (an 0.8-unit undrawn strip on 4 cells, every release and upstream 2.0.0-alpha7/11) and
   on a synthetic bent wall (`testmapsQ2.bentWallPortalSplit`: 54 points undrawn before, 0 after). The tiny-portal rule
   itself is unchanged (see the crossing-fins limit below).
+  The same epsilon also moved a split LINE: when it split a portal but one vertex was "on" only by the epsilon while lying
+  well away from the planes' intersection (`EpsilonMovesSplitLine`), the split ran through that vertex and the triangle
+  between it and the true intersection (74 units long, 0.37 wide on the Quake II AXIAL DEFORM 'organic' shell) went to
+  the air in front of the next wall and was never drawn; there too the finer clip decides when both of its pieces are
+  substantial (`testmapsQ2.curvedWallPortalSplitLine`).
 
 #### Known limits
 

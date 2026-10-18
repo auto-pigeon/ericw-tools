@@ -14,6 +14,9 @@
 #include <map>
 
 #include "test_qbsp.hh"
+#include <qbsp/qbsp.hh>
+#include <common/bspfile.hh>
+#include <testmaps.hh>
 
 TEST(testmapsQ2, detail)
 {
@@ -1511,6 +1514,61 @@ TEST(testmapsQ2, bentWallPortalSplit)
                     EXPECT_NE(nullptr, BSP_FindFaceAtPoint(&bsp, world, point, normal));
                 }
             }
+        }
+    }
+}
+
+/*
+ * Compile a Q2 test map the way LoadTestmap does, without LoadTestmap's CheckBsp. For the deformed shell below,
+ * CheckBsp reports 8 faces whose windings are degenerate (zero or near-zero area, so the plane of their first
+ * three points is meaningless) -- the same 8 before and after the portal split fix this map tests, with -tjunc
+ * none or mwt alike; they are a separate matter, not what this test is about.
+ */
+static mbsp_t CompileTestmapQ2WithoutCheckBsp(const std::filesystem::path &name, std::vector<std::string> extra_args)
+{
+    const auto map_path = std::filesystem::path(testmaps_dir) / name;
+    auto bsp_path = map_path;
+    bsp_path.replace_extension(".bsp");
+
+    std::vector<std::string> args{"", "-noverbose", "-q2bsp", "-path",
+        (std::filesystem::path(testmaps_dir) / "q2_wal_metadata").string()};
+    args.insert(args.end(), extra_args.begin(), extra_args.end());
+    args.push_back(map_path.string());
+    args.push_back(bsp_path.string());
+
+    InitQBSP(args);
+    ProcessFile();
+
+    bspdata_t bspdata;
+    LoadBSPFile(bsp_path, &bspdata);
+    ConvertBSPFormat(&bspdata, &bspver_generic);
+    return std::move(std::get<mbsp_t>(bspdata.bsp));
+}
+
+TEST(testmapsQ2, curvedWallPortalSplitLine)
+{
+    // Q2_012A. The Quake II harness's AXIAL DEFORM 'organic' shell (q2t.deform.organic.medium S1), reduced from
+    // 199 to 89 units; no synthetic map reproduced the tree this needs. Two wall faces stacked at z = 528 share
+    // their edge there and meet at 0.00144 rad: the lower one's plane and the next brush's. A portal on the lower
+    // wall's plane had one vertex 0.37 below z = 528, so 0.000535 off the upper wall's plane -- inside the 0.001
+    // split epsilon -- and the split line was drawn through that vertex instead of along the planes'
+    // intersection: a triangle 74 units long and up to 0.37 wide, the top of the lower wall, went to the air in
+    // front of the upper wall, bounded air on both sides and was never drawn. Collision and leaf contents were
+    // right. Every point of that strip must be drawn.
+    const mbsp_t bsp = CompileTestmapQ2WithoutCheckBsp("q2_curved_wall_portal_split_line.map", {});
+    const dmodelh2_t *world = &bsp.dmodels[0];
+
+    const qvec3d normal{-0.132351, -0.985927, -0.102131}; // the lower wall, facing the air
+    constexpr double dist = -51.3666;
+
+    for (const double x : {-86.0, -82.0, -78.0, -74.0, -70.0}) {
+        for (const double z : {527.85, 527.95}) {
+            const qvec3d point{x, (dist - normal[0] * x - normal[2] * z) / normal[1], z};
+            SCOPED_TRACE(fmt::format("point {}", point));
+
+            EXPECT_EQ(Q2_CONTENTS_EMPTY, BSP_FindLeafAtPoint(&bsp, world, point + normal * 0.25)->contents);
+            EXPECT_EQ(Q2_CONTENTS_SOLID, BSP_FindLeafAtPoint(&bsp, world, point - normal * 0.25)->contents);
+            EXPECT_NE(nullptr, BSP_FindFaceAtPoint(&bsp, world, point, normal));
         }
     }
 }

@@ -237,6 +237,13 @@ The finer clip's verdict is taken only for pieces that are substantial: not tiny
 EDGE_LENGTH_EPSILON wide. When both pieces are substantial the winding is split there; when only the
 piece on the side the epsilon left empty is, the whole winding goes to that side. Otherwise the
 epsilon's verdict stands, so no sliver, and no piece that the callers would drop as tiny, is made.
+
+The same strip goes astray when the epsilon does split the winding but one vertex is "on" only by the
+epsilon while lying well away from the intersection line (EpsilonMovesSplitLine): the split line then
+runs through that vertex, and the triangle between it and the true intersection -- up to epsilon / theta
+wide -- is handed to the wrong child (Q2_012A organic: a wall triangle 74 units long and 0.37 wide went to
+the air leaf in front of the next brush's wall, so it bounded air on both sides and was never drawn). There
+too the finer clip's verdict is taken when both of its pieces are substantial.
 ==================
 */
 constexpr double PORTAL_FINE_EPSILON = NORMAL_EPSILON;
@@ -246,12 +253,39 @@ static bool PortalPieceIsSubstantial(const std::optional<winding_t> &w)
     return w && !WindingIsTiny(*w) && WindingMinWidth(*w) >= EDGE_LENGTH_EPSILON;
 }
 
+/*
+==================
+EpsilonMovesSplitLine
+
+True when some vertex of `w` is "on" `plane` only by the epsilon (farther than PORTAL_FINE_EPSILON, not farther
+than `epsilon`) and lies at least EDGE_LENGTH_EPSILON from the line where the two planes meet. Such a vertex is
+put on both sides, so the split line is drawn through it instead of along the intersection: the triangle between
+the two lines -- as wide as the vertex is far from the intersection, distance / sin(theta) -- goes to the wrong
+side. For two planes at a large angle that triangle is never wider than the epsilon itself and this is false.
+==================
+*/
+static bool EpsilonMovesSplitLine(const winding_t &w, const qplane3d &plane, double epsilon)
+{
+    const double sin_theta = qv::length(qv::cross(w.plane().normal, plane.normal));
+
+    for (auto &point : w) {
+        const double d = std::fabs(plane.distance_to(point));
+        if (d > PORTAL_FINE_EPSILON && d <= epsilon && d >= EDGE_LENGTH_EPSILON * sin_theta) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static twosided<std::optional<winding_t>> ClipPortalWinding(
     const winding_t &w, const qplane3d &plane, double epsilon, bool keepon)
 {
     auto result = w.clip(plane, epsilon, keepon);
 
-    if (result.front.has_value() == result.back.has_value()) {
+    const bool one_sided = result.front.has_value() != result.back.has_value();
+    const bool two_sided = result.front.has_value() && result.back.has_value();
+
+    if (!one_sided && !(two_sided && EpsilonMovesSplitLine(w, plane, epsilon))) {
         return result;
     }
 
@@ -262,10 +296,10 @@ static twosided<std::optional<winding_t>> ClipPortalWinding(
     if (front && back) {
         return fine;
     }
-    if (front && !result.front) {
+    if (one_sided && front && !result.front) {
         return {w.clone(), std::nullopt};
     }
-    if (back && !result.back) {
+    if (one_sided && back && !result.back) {
         return {std::nullopt, w.clone()};
     }
 
