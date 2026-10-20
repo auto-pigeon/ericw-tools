@@ -804,11 +804,25 @@ static void MakeFaces_r(node_t *node, makefaces_stats_t &stats)
 MakeFaces
 ============
 */
-void MakeFaces(node_t *node)
+void MakeFaces(tree_t &tree)
 {
     logging::funcheader();
 
     makefaces_stats_t stats{};
 
-    MakeFaces_r(node, stats);
+    // the draw-only portals' faces (KeepTinyPortalForFaces in portals.cc) go on their node before MakeFaces_r merges
+    // that node's faces; as there, a solid leaf has no visible face
+    for (auto &p : tree.draw_only_portals) {
+        for (const bool pside : {false, true}) {
+            if (p->nodes[pside]->get_leafdata()->contents.is_any_solid()) {
+                continue;
+            }
+            if (std::unique_ptr<face_t> f = FaceFromPortal(p.get(), pside)) {
+                stats.c_nodefaces++;
+                p->onnode->get_nodedata()->facelist.push_back(std::move(f));
+            }
+        }
+    }
+
+    MakeFaces_r(tree.headnode, stats);
 }

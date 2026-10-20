@@ -45,6 +45,11 @@ struct tree_t
     // here for ownership/memory management - not intended to be iterated directly
     std::vector<std::unique_ptr<portal_t>> portals;
 
+    // tiny leaf portals that make faces and nothing else: never linked into a node's portal list, so the outside
+    // and area floods, VIS, the portal file and leaf bounds read the same portals as without them (see
+    // KeepTinyPortalForFaces in portals.cc). Iterated by MarkVisibleSides and MakeFaces.
+    std::vector<std::unique_ptr<portal_t>> draw_only_portals;
+
     // which kind of portals (cluster portals or leaf portals) are currently built?
     portaltype_t portaltype = portaltype_t::NONE;
 

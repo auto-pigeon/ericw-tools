@@ -220,6 +220,48 @@ static double WindingMinWidth(const winding_t &w)
 
 /*
 ==================
+KeepTinyPortalForFaces
+
+WindingIsTiny drops a portal with fewer than three edges longer than EDGE_LENGTH_EPSILON (0.2): "crunched out of
+existence by the vertex snapping". In this compiler a drawn face IS a portal winding (FaceFromPortal), so a
+dropped tiny portal between air and a solid is an undrawn strip of the solid's face: SCULPT's tessellation-16
+patch lost a cap fragment 7 units long and 0.135 wide that way (NEW_328), the narrow chamfers 0.03-0.07 wide
+likewise. The drop is also what keeps hairline gaps between brushes from leaking and VIS away from slivers, and
+that must not change.
+
+So a tiny portal is kept only to draw its face -- a draw-only portal: it is pushed down to the leaves like any
+other, but it is never linked into a node's portal list, so the outside and area floods, VIS, the portal file
+and leaf bounds read exactly the portals they read without it.
+
+It is kept only when the output can carry the face it makes, which two later passes decide: the vertex weld
+(EmitVertex: vertices closer than POINT_EQUAL_EPSILON are one) and the T-junction pass (PointOnEdge: a vertex
+within DEFAULT_ON_EPSILON of an edge is put INTO that edge). A winding the weld crunches to fewer than three
+vertices or to no area is dropped, and so is one no wider than DEFAULT_ON_EPSILON anywhere: the T-junction pass
+cannot keep its two long edges apart, and threads one's vertices into the other or into the next face along
+(measured: the 0.06-wide sides of a thin skin and of a water film came out with zero or reversed normals, their
+own or a neighbour's). Such a winding was not drawn before either.
+==================
+*/
+static bool KeepTinyPortalForFaces(const winding_t &w)
+{
+    std::vector<qvec3d> welded;
+    for (auto &point : w) {
+        if (welded.empty() || qv::distance(welded.back(), point) >= POINT_EQUAL_EPSILON) {
+            welded.push_back(point);
+        }
+    }
+    while (welded.size() > 1 && qv::distance(welded.front(), welded.back()) < POINT_EQUAL_EPSILON) {
+        welded.pop_back();
+    }
+    if (welded.size() < 3) {
+        return false;
+    }
+    const winding_t kept(welded.begin(), welded.end());
+    return kept.area() > ZERO_TRI_AREA_EPSILON && WindingMinWidth(kept) > DEFAULT_ON_EPSILON;
+}
+
+/*
+==================
 ClipPortalWinding
 
 winding_t::clip with `epsilon`, except where the epsilon alone decides that the whole winding lies on one
@@ -338,7 +380,7 @@ portals in the node.
 ==================
 */
 static std::optional<buildportal_t> MakeNodePortal(
-    node_t *node, const std::list<buildportal_t> &boundary_portals, portalstats_t &stats)
+    node_t *node, portaltype_t type, const std::list<buildportal_t> &boundary_portals, portalstats_t &stats)
 {
     auto w = BaseWindingForNode(node);
 
@@ -346,6 +388,9 @@ static std::optional<buildportal_t> MakeNodePortal(
     for (auto &p : boundary_portals) {
         if (!w) {
             break;
+        }
+        if (p.draw_only) {
+            continue; // not a portal to anything but the face it draws: the winding is clipped as without it
         }
         qplane3d plane;
 
@@ -365,9 +410,14 @@ static std::optional<buildportal_t> MakeNodePortal(
         return std::nullopt;
     }
 
+    bool draw_only = false;
     if (WindingIsTiny(*w)) {
         stats.c_tinyportals++;
-        return std::nullopt;
+        if (type != portaltype_t::TREE || !KeepTinyPortalForFaces(*w)) {
+            return std::nullopt;
+        }
+        stats.c_drawonlyportals++;
+        draw_only = true;
     }
 
     auto *nodedata = node->get_nodedata();
@@ -377,6 +427,7 @@ static std::optional<buildportal_t> MakeNodePortal(
     new_portal.onnode = node;
     new_portal.winding = std::move(*w);
     new_portal.nodes = nodedata->children;
+    new_portal.draw_only = draw_only;
     return std::move(new_portal);
 }
 
@@ -389,7 +440,7 @@ children have portals instead of node.
 ==============
 */
 static twosided<std::list<buildportal_t>> SplitNodePortals(
-    const node_t *node, std::list<buildportal_t> boundary_portals, portalstats_t &stats)
+    const node_t *node, portaltype_t type, std::list<buildportal_t> boundary_portals, portalstats_t &stats)
 {
     auto *nodedata = node->get_nodedata();
 
@@ -417,17 +468,50 @@ static twosided<std::list<buildportal_t>> SplitNodePortals(
         //
         auto [frontwinding, backwinding] = ClipPortalWinding(p.winding, plane.get_plane(), SPLIT_WINDING_EPSILON, true);
 
+        // a draw-only portal (KeepTinyPortalForFaces) is split like any other but never folded into the other
+        // child: each piece that can still be drawn goes to its own side
+        auto keep_draw_only = [&](std::optional<winding_t> &piece, node_t *child, std::list<buildportal_t> &out) {
+            if (!piece || !KeepTinyPortalForFaces(*piece)) {
+                return;
+            }
+            buildportal_t kept{};
+            kept.plane = p.plane;
+            kept.onnode = p.onnode;
+            kept.winding = std::move(*piece);
+            kept.nodes = (side == SIDE_FRONT) ? twosided<node_t *>{child, other_node}
+                                              : twosided<node_t *>{other_node, child};
+            kept.draw_only = true;
+            out.push_back(std::move(kept));
+        };
+
+        if (p.draw_only) {
+            keep_draw_only(frontwinding, f, result.front);
+            keep_draw_only(backwinding, b, result.back);
+            continue;
+        }
+
+        std::optional<winding_t> tinyfront, tinyback;
+
         if (frontwinding && WindingIsTiny(*frontwinding)) {
+            tinyfront = std::move(frontwinding);
             frontwinding = {};
             stats.c_tinyportals++;
         }
 
         if (backwinding && WindingIsTiny(*backwinding)) {
+            tinyback = std::move(backwinding);
             backwinding = {};
             stats.c_tinyportals++;
         }
 
         if (!frontwinding && !backwinding) { // tiny windings on both sides
+            // nothing is folded into the other child, so the pieces are lost to the faces too unless kept to draw
+            if (type == portaltype_t::TREE) {
+                const size_t before = result.front.size() + result.back.size();
+                keep_draw_only(tinyfront, f, result.front);
+                keep_draw_only(tinyback, b, result.back);
+                stats.c_drawonlyportals += result.front.size() + result.back.size() - before;
+            }
             continue;
         }
 
@@ -484,6 +568,15 @@ void MakePortalsFromBuildportals(tree_t &tree, std::list<buildportal_t> &buildpo
     tree.portals.reserve(buildportals.size());
 
     for (auto &buildportal : buildportals) {
+        if (buildportal.draw_only) {
+            // owned by the tree, never linked into a node's portal list (KeepTinyPortalForFaces)
+            auto &kept = tree.draw_only_portals.emplace_back(std::make_unique<portal_t>());
+            kept->plane = buildportal.plane;
+            kept->onnode = buildportal.onnode;
+            kept->winding = std::move(buildportal.winding);
+            kept->nodes = buildportal.nodes;
+            continue;
+        }
         portal_t *new_portal = tree.create_portal();
         new_portal->plane = buildportal.plane;
         new_portal->onnode = buildportal.onnode;
@@ -564,7 +657,7 @@ static std::list<buildportal_t> ClipNodePortalsToTree_r(
     }
     auto *nodedata = node->get_nodedata();
 
-    auto boundary_portals_split = SplitNodePortals(node, std::move(portals), stats);
+    auto boundary_portals_split = SplitNodePortals(node, type, std::move(portals), stats);
 
     auto front_fragments =
         ClipNodePortalsToTree_r(nodedata->children[0], type, std::move(boundary_portals_split.front), stats);
@@ -593,12 +686,12 @@ std::list<buildportal_t> MakeTreePortals_r(node_t *node, portaltype_t type, std:
     }
 
     // make the node portal before we move out the boundary_portals
-    std::optional<buildportal_t> nodeportal = MakeNodePortal(node, boundary_portals, stats);
+    std::optional<buildportal_t> nodeportal = MakeNodePortal(node, type, boundary_portals, stats);
 
     // parallel part: split boundary_portals between the front and back, and obtain the fully
     // portalized front/back sides in parallel
 
-    auto boundary_portals_split = SplitNodePortals(node, std::move(boundary_portals), stats);
+    auto boundary_portals_split = SplitNodePortals(node, type, std::move(boundary_portals), stats);
 
     std::list<buildportal_t> result_portals_front, result_portals_back;
 
@@ -1289,6 +1382,21 @@ void MarkVisibleSides(tree_t &tree, bspbrush_t::container &brushes)
     visible_faces_stats_t stats;
     // set visible flags on the sides that are used by portals
     MarkVisibleSides_r(tree.headnode, stats);
+
+    // and by the draw-only portals, examined as MarkVisibleSides_r examines a linked one: from a leaf that is not
+    // empty
+    for (auto &p : tree.draw_only_portals) {
+        if (p->nodes[0]->get_leafdata()->contents.is_empty() && p->nodes[1]->get_leafdata()->contents.is_empty()) {
+            continue;
+        }
+        FindPortalSide(p.get(), stats);
+        for (int i = 0; i < 2; ++i) {
+            if (p->sides[i] && p->sides[i]->source) {
+                p->sides[i]->source->visible = true;
+                stats.sides_visible++;
+            }
+        }
+    }
 
     if (!stats.missing_portal_sides.empty() && qbsp_options.debug_missing_portal_sides.value()) {
         fs::path name = qbsp_options.bsp_path;

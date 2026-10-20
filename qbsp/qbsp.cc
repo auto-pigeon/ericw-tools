@@ -1236,7 +1236,7 @@ static void ProcessEntity(mapentity_t &entity, hull_index_t hullnum)
     MakeTreePortals(tree);
 
     MarkVisibleSides(tree, brushes);
-    MakeFaces(tree.headnode);
+    MakeFaces(tree);
 
     FreeTreePortals(tree);
     PruneNodes(tree.headnode);

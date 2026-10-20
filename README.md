@@ -63,6 +63,23 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   the air in front of the next wall and was never drawn; there too the finer clip decides when both of its pieces are
   substantial (`testmapsQ2.curvedWallPortalSplitLine`).
 
+- A portal the tiny-portal rule drops still draws its face. In this compiler a drawn face is a portal's winding
+  (`FaceFromPortal`), and `MakeNodePortal` dropped a node portal with fewer than three edges longer than 0.2
+  (`WindingIsTiny`), so the strip of a solid's face under such a portal was never drawn: on a SCULPT patch at
+  tessellation 16 turned 45 degrees, two cap strips about 7 units long and 0.135 wide (2 of AUT's 7,366 sample points,
+  every release up to 1.4524, Quake 1 and `-q2bsp` alike; collision and leaf contents were right). Such a portal, and
+  the pieces `SplitNodePortals` lost when both were tiny, are now kept as **draw-only** portals
+  (`KeepTinyPortalForFaces`): pushed down to the leaves, never linked into a node's portal list, read only by
+  `MarkVisibleSides` and `MakeFaces`. The outside and area floods, VIS, the portal file and leaf bounds see the portals
+  they saw before, so a hairline gap seals and fills exactly as it did (measured on the sculpt map: the same `.prt`
+  bytes, nodes, leafs, brush sides, Quake II brushes and Quake 1 clip hulls; only faces differ). A tiny portal is kept
+  only when the output can carry its face: three or more vertices after the 0.05 weld, some area, and wider than the
+  T-junction pass's on-edge distance (`DEFAULT_ON_EPSILON`, 0.1) -- narrower, that pass threads one long edge's
+  vertices into the other or into the next face and twists it (the 0.06 sides of a thin skin and of a water film:
+  `testmapsQ1.leafGuardKeepsMaterial`, `sub002ObliqueSkin`). `testmapsQ2.sculptTinyNodePortalDrawn`,
+  `testmapsQ1.sculptTinyNodePortalDrawn`; `testmapsQ1.hairlineCrackPocketUnchanged` holds a 0.15 crack into a closed
+  pocket to what it was.
+
 #### Known limits
 
 - **A whole brush thinner than 0.001 units (`PLANESIDE_EPSILON`) is dropped.** It does not reach past its own far plane,
@@ -88,7 +105,14 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
 - A brush whose two opposite faces coincide (zero thickness) makes `qbsp` crash while it builds the clip hulls (exit by
   signal, no BSP), exactly as upstream 2.0.0-alpha11 does. The editor does not write such a brush.
 - With the default T-junction mode a drawn face can get a 0.03-unit spike (a vertex visited twice); upstream writes
-  the same.
+  the same. On a finely tessellated patch it writes such slivers with a reversed or flat winding: 44 on
+  `testmaps/q2_sculpt_tiny_node_portal.map` with release 1.4524, 45 with draw-only portals (one kept triangle 0.115 wide
+  at its widest is narrower than 0.1 near its apex), and `CheckBsp` fails that map with `-tjunc none` too (5 windings
+  whose first three points are collinear to its epsilon). The sculpt tests count both readings and bound them instead
+  of asserting `CheckBsp`.
+- **A face strip narrower than 0.1 units under a tiny portal is not drawn.** `KeepTinyPortalForFaces` keeps such a
+  portal for its face only when the face is wider than the T-junction pass's on-edge distance; a 0.03 or 0.07 chamfer
+  and the 0.06 sides of a thin skin stay undrawn, as in every earlier release.
 
 Everything below the Auto-Pigeon sections is upstream's own README.
 

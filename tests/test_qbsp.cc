@@ -4092,10 +4092,11 @@ TEST(testmapsQ1, sculptTinyNodePortalDrawn)
             EXPECT_NE(nullptr, Q1FaceOnPlaneAtPoint(bsp, point, normal));
         }
     };
-    // as there, CheckBsp's question is audited apart and bounded by what was measured before this change: in Quake 1,
-    // -tjunc mwt 44 reversed or flat slivers and 85 three-point readings, -tjunc none 0 and 5
+    // as there, CheckBsp's question is audited apart and bounded; in Quake 1, before / after the draw-only portals,
+    // -tjunc mwt 44 / 45 reversed or flat slivers (the one more: the same spike on the same kept triangle) and 85 / 86
+    // three-point readings, -tjunc none 0 / 0 and 5 / 5
     for (const auto &[tjunc, reversed_at_most, three_point_at_most] :
-        {std::tuple<const char *, size_t, size_t>{"mwt", 44, 85}, std::tuple<const char *, size_t, size_t>{"none", 0, 5}}) {
+        {std::tuple<const char *, size_t, size_t>{"mwt", 45, 86}, std::tuple<const char *, size_t, size_t>{"none", 0, 5}}) {
         SCOPED_TRACE(fmt::format("-tjunc {}", tjunc));
         const auto prt_path = std::filesystem::path(testmaps_dir) / "q1_sculpt_tiny_node_portal.prt";
         std::filesystem::remove(prt_path);

@@ -59,11 +59,14 @@ struct buildportal_t
     // .front/.back side of planenum
     twosided<node_t *> nodes = {nullptr, nullptr};
     winding_t winding;
+    // a winding the tiny-portal rule drops, kept only to draw the face it bounds (see KeepTinyPortalForFaces)
+    bool draw_only = false;
 };
 
 struct portalstats_t : logging::stat_tracker_t
 {
     stat &c_tinyportals = register_stat("tiny portals");
+    stat &c_drawonlyportals = register_stat("tiny portals kept only to draw their faces");
 };
 
 contentflags_t ClusterContents(const node_t *node);
