@@ -4094,9 +4094,11 @@ TEST(testmapsQ1, sculptTinyNodePortalDrawn)
     };
     // as there, CheckBsp's question is audited apart and bounded; in Quake 1, before / after the draw-only portals,
     // -tjunc mwt 44 / 45 reversed or flat slivers (the one more: the same spike on the same kept triangle) and 85 / 86
-    // three-point readings, -tjunc none 0 / 0 and 5 / 5
+    // three-point readings, -tjunc none 0 / 0 and 5 / 5. Those counts are the sliver pass's float arithmetic and differ by
+    // platform (release run 39391773523 of a94299e4: macOS arm64 48 / 92, macOS x86-64 at most 86 / 87, Windows 91
+    // three-point), so the bound is the most any built target measured; the strip assertions above hold on all of them
     for (const auto &[tjunc, reversed_at_most, three_point_at_most] :
-        {std::tuple<const char *, size_t, size_t>{"mwt", 45, 86}, std::tuple<const char *, size_t, size_t>{"none", 0, 5}}) {
+        {std::tuple<const char *, size_t, size_t>{"mwt", 48, 92}, std::tuple<const char *, size_t, size_t>{"none", 0, 5}}) {
         SCOPED_TRACE(fmt::format("-tjunc {}", tjunc));
         const auto prt_path = std::filesystem::path(testmaps_dir) / "q1_sculpt_tiny_node_portal.prt";
         std::filesystem::remove(prt_path);

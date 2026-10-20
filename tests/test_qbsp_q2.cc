@@ -1650,8 +1650,11 @@ TEST(testmapsQ2, sculptTinyNodePortalDrawn)
     //                         (20.7, 47.1, 289.0): near its apex it is narrower than the pass's 0.1 on-edge distance
     //   -tjunc none           reversed or flat: 0 / 0; three-point reading: 5 / 5 (windings whose first points are
     //                         collinear to within its epsilon, not reversed)
+    // The -tjunc mwt counts are the sliver pass's float arithmetic and differ by platform (release run 39391773523 of
+    // a94299e4: macOS arm64 47 / 90, macOS x86-64 at most 86 three-point, Windows 90), so the bound is the most any built
+    // target measured; the strip assertions hold on all of them
     for (const auto &[tjunc, reversed_at_most, three_point_at_most] :
-        {std::tuple<const char *, size_t, size_t>{"mwt", 45, 85}, std::tuple<const char *, size_t, size_t>{"none", 0, 5}}) {
+        {std::tuple<const char *, size_t, size_t>{"mwt", 47, 90}, std::tuple<const char *, size_t, size_t>{"none", 0, 5}}) {
         SCOPED_TRACE(fmt::format("-tjunc {}", tjunc));
         const auto prt_path = std::filesystem::path(testmaps_dir) / "q2_sculpt_tiny_node_portal.prt";
         std::filesystem::remove(prt_path);
