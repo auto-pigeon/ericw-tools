@@ -22,6 +22,13 @@ std::tuple<mbsp_t, bspxentries_t, std::optional<prtfile_t>> LoadTestmapQ2(
     const std::filesystem::path &name, std::vector<std::string> extra_args = {});
 std::tuple<mbsp_t, bspxentries_t, std::optional<prtfile_t>> LoadTestmapQ1(
     const std::filesystem::path &name, std::vector<std::string> extra_args = {});
+// NEW_328: CheckBsp's face-orientation question counted, not asserted (defined in test_qbsp_q2.cc)
+struct winding_audit_t
+{
+    size_t three_point = 0; // CheckFaceNormal's reading: the first three non-collinear points face the wrong way
+    size_t reversed = 0; // the whole winding's (Newell) normal does: really reversed, or flat
+};
+winding_audit_t AuditFaceWindings(const mbsp_t &bsp, double max_area);
 void CheckFilled(const mbsp_t &bsp, hull_index_t hullnum);
 void CheckFilled(const mbsp_t &bsp);
 std::map<std::string, std::vector<const mface_t *>> MakeTextureToFaceMap(const mbsp_t &bsp);

@@ -4043,3 +4043,98 @@ TEST(testmapsQ1, leaktest)
     EXPECT_THAT(
             l, testing::ThrowsMessage<std::exception>(testing::HasSubstr("Aborting because -leaktest was used.")));
 }
+/* As FaceOnPlaneAtPoint in test_qbsp_q2.cc: a face at `point` that wears `normal` itself, not a neighbouring facet. */
+static const mface_t *Q1FaceOnPlaneAtPoint(const mbsp_t &bsp, const qvec3d &point, const qvec3d &normal)
+{
+    for (const mface_t *face : BSP_FindFacesAtPoint(&bsp, &bsp.dmodels[0], point, normal)) {
+        if (qv::dot(Face_Normal(&bsp, face), normal) > 0.9999) {
+            return face;
+        }
+    }
+    return nullptr;
+}
+
+/* Compile a Quake 1 test map as LoadTestmap does, without its CheckBsp, for a map whose integrity failure is counted. */
+static mbsp_t CompileTestmapQ1WithoutCheckBsp(const std::filesystem::path &name, std::vector<std::string> extra_args)
+{
+    const auto map_path = std::filesystem::path(testmaps_dir) / name;
+    auto bsp_path = map_path;
+    bsp_path.replace_extension(".bsp");
+
+    std::vector<std::string> args{"", "-noverbose"};
+    args.insert(args.end(), extra_args.begin(), extra_args.end());
+    args.push_back(map_path.string());
+    args.push_back(bsp_path.string());
+
+    InitQBSP(args);
+    ProcessFile();
+
+    bspdata_t bspdata;
+    LoadBSPFile(bsp_path, &bspdata);
+    ConvertBSPFormat(&bspdata, &bspver_generic);
+    return std::move(std::get<mbsp_t>(bspdata.bsp));
+}
+
+TEST(testmapsQ1, sculptTinyNodePortalDrawn)
+{
+    // NEW_328: testmapsQ2.sculptTinyNodePortalDrawn's geometry compiled as Quake 1 (the same planes, the Quake II face
+    // tails dropped). The hull-0 tree has the same 0.135-wide cap strip with a tiny node portal, and Quake 1 drew it no
+    // more than -q2bsp did. It must be drawn; air in front, solid behind, in hull 0.
+    const std::pair<qvec3d, qvec3d> strips[] = {
+        {{-25.078720405533833, 56.56854299524737, 288.09104809166075},
+            {0.008456893727033727, 0.020883349761996524, 0.9997461511059733}}};
+    auto check = [&](const mbsp_t &bsp) {
+        const dmodelh2_t *world = &bsp.dmodels[0];
+        for (const auto &[point, normal] : strips) {
+            SCOPED_TRACE(fmt::format("point {}", point));
+            EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 0, world, point + normal * 0.25));
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 0, world, point - normal * 0.25));
+            EXPECT_NE(nullptr, Q1FaceOnPlaneAtPoint(bsp, point, normal));
+        }
+    };
+    // as there, CheckBsp's question is audited apart and bounded by what was measured before this change: in Quake 1,
+    // -tjunc mwt 44 reversed or flat slivers and 85 three-point readings, -tjunc none 0 and 5
+    for (const auto &[tjunc, reversed_at_most, three_point_at_most] :
+        {std::tuple<const char *, size_t, size_t>{"mwt", 44, 85}, std::tuple<const char *, size_t, size_t>{"none", 0, 5}}) {
+        SCOPED_TRACE(fmt::format("-tjunc {}", tjunc));
+        const auto prt_path = std::filesystem::path(testmaps_dir) / "q1_sculpt_tiny_node_portal.prt";
+        std::filesystem::remove(prt_path);
+        const mbsp_t bsp = CompileTestmapQ1WithoutCheckBsp("q1_sculpt_tiny_node_portal.map", {"-tjunc", tjunc});
+        EXPECT_TRUE(std::filesystem::exists(prt_path)) << "no portal file: the map leaked";
+        check(bsp);
+        const winding_audit_t audit = AuditFaceWindings(bsp, 0.5);
+        EXPECT_LE(audit.reversed, reversed_at_most);
+        EXPECT_LE(audit.three_point, three_point_at_most);
+        testing::Test::RecordProperty(fmt::format("tjunc_{}_reversed", tjunc), static_cast<int>(audit.reversed));
+        testing::Test::RecordProperty(fmt::format("tjunc_{}_three_point", tjunc), static_cast<int>(audit.three_point));
+    }
+}
+
+TEST(testmapsQ1, hairlineCrackPocketUnchanged)
+{
+    // NEW_328 control for sculptTinyNodePortalDrawn: a portal the tiny rule drops may draw its face, and nothing else.
+    // A closed pocket under the floor is joined to the room only by a 0.15-wide crack, so every portal into the crack
+    // is tiny. The flood that decides what is outside does not cross those portals, so the room does not leak through
+    // the crack, and the crack and the pocket are filled exactly as a hairline gap always has been (README: Known
+    // limits). No face is drawn inside them, and the floor round the crack is drawn.
+    for (const std::vector<std::string> &extra_args :
+        {std::vector<std::string>{"-leaktest"}, std::vector<std::string>{"-leaktest", "-forcegoodtree"}}) {
+        SCOPED_TRACE(extra_args.back());
+        const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_hairline_crack_pocket.map", extra_args);
+        const dmodelh2_t *world = &bsp.dmodels[0];
+        ASSERT_TRUE(prt.has_value());
+
+        EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 0, world, {-100, -100, 40}));
+        for (const qvec3d &filled : {qvec3d{32, 0, -32}, qvec3d{-32, 0, -32}, qvec3d{0.075, 0, -8}, qvec3d{0.075, 0, -0.5}}) {
+            SCOPED_TRACE(fmt::format("crack or pocket {}", filled));
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 0, world, filled));
+        }
+        for (const mface_t &face : bsp.dfaces) {
+            for (const auto &v : Face_Points(&bsp, &face)) {
+                EXPECT_GT(v[2], -0.01) << "a face below the floor's top, in the crack or the pocket";
+            }
+        }
+        EXPECT_NE(nullptr, Q1FaceOnPlaneAtPoint(bsp, {-32, 0, 0}, {0, 0, 1}));
+        EXPECT_NE(nullptr, Q1FaceOnPlaneAtPoint(bsp, {32, 0, 0}, {0, 0, 1}));
+    }
+}

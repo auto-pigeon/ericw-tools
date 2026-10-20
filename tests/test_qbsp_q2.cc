@@ -1572,3 +1572,94 @@ TEST(testmapsQ2, curvedWallPortalSplitLine)
         }
     }
 }
+
+/*
+ * A face whose winding is within 0.1 of `point` and wears `normal` itself (to 1e-4): BSP_FindFaceAtPoint takes any face
+ * on a node plane within 0.1 that does not face away, and on a finely tessellated surface that can be a neighbouring
+ * facet.
+ */
+static const mface_t *FaceOnPlaneAtPoint(const mbsp_t &bsp, const qvec3d &point, const qvec3d &normal)
+{
+    for (const mface_t *face : BSP_FindFacesAtPoint(&bsp, &bsp.dmodels[0], point, normal)) {
+        if (qv::dot(Face_Normal(&bsp, face), normal) > 0.9999) {
+            return face;
+        }
+    }
+    return nullptr;
+}
+
+/*
+ * CheckBsp's question, counted rather than asserted, two ways. `three_point`: CheckFaceNormal's own reading -- the plane
+ * of the winding's first three non-collinear points does not face the face's plane's way. `reversed`: the whole
+ * winding's (Newell) normal does not, so the polygon really is reversed or flat; each of those must be a sliver
+ * smaller than `max_area`. A three-point flag that is not `reversed` is a winding whose first vertices form a spike.
+ */
+winding_audit_t AuditFaceWindings(const mbsp_t &bsp, double max_area)
+{
+    winding_audit_t audit;
+    for (const mface_t &face : bsp.dfaces) {
+        const qvec3d normal = Face_Normal(&bsp, &face);
+        auto winding = Face_Winding(&bsp, &face);
+        qvec3d newell{};
+        for (size_t i = 0; i < winding.size(); i++) {
+            const qvec3d &a = winding[i], &b = winding[(i + 1) % winding.size()];
+            newell += qvec3d{(a[1] - b[1]) * (a[2] + b[2]), (a[2] - b[2]) * (a[0] + b[0]), (a[0] - b[0]) * (a[1] + b[1])};
+        }
+        // Quake winds a face clockwise seen from the front, so its Newell normal points back
+        if (qv::dot(newell, normal) >= 0) {
+            audit.reversed++;
+            EXPECT_LT(winding.area(), max_area) << "not a sliver: face " << (&face - bsp.dfaces.data());
+        }
+        winding.remove_colinear();
+        if (winding.size() >= 3 && qv::dot(normal, winding.plane().normal) <= 0.0) {
+            audit.three_point++;
+        }
+    }
+    return audit;
+}
+
+// the +y strip, the one the reduction kept (its mirror at -y lost its brushes on the way)
+static const std::pair<qvec3d, qvec3d> sculpt_tiny_node_portal_strips[] = {
+    {{-25.078720405533833, 56.56854299524737, 288.09104809166075},
+        {0.008456893727033727, 0.020883349761996524, 0.9997461511059733}}};
+
+TEST(testmapsQ2, sculptTinyNodePortalDrawn)
+{
+    // NEW_328. AUT's q2s.sculpt.tess-high stage S2: a SCULPT patch at tessellation 16, turned 45 degrees. Two cap facets
+    // of the patch (mirror images about y = 0) each had a strip about 7 units long and 0.135 wide whose node portal --
+    // between the air above the patch and the patch's solid -- has fewer than three edges longer than 0.2, so
+    // MakeNodePortal dropped it as tiny. In this compiler a drawn face IS a portal winding, so the strip was never
+    // drawn: 2 of the harness's 7,366 sample points, on every release up to 1.4524, both export routes. Leaf
+    // contents, collision and the leak verdict were right. The reduced map keeps the +y strip; its point must be drawn
+    // on its own facet's plane, with air in front and the patch behind, and the compile must seal.
+    auto check = [](const mbsp_t &bsp) {
+        const dmodelh2_t *world = &bsp.dmodels[0];
+        for (const auto &[point, normal] : sculpt_tiny_node_portal_strips) {
+            SCOPED_TRACE(fmt::format("point {}", point));
+            EXPECT_EQ(Q2_CONTENTS_EMPTY, BSP_FindLeafAtPoint(&bsp, world, point + normal * 0.25)->contents);
+            EXPECT_EQ(Q2_CONTENTS_SOLID, BSP_FindLeafAtPoint(&bsp, world, point - normal * 0.25)->contents);
+            EXPECT_NE(nullptr, FaceOnPlaneAtPoint(bsp, point, normal));
+        }
+    };
+    // LoadTestmap's CheckBsp is not used, because this map fails it with the compiler as it was, for reasons that are not
+    // this defect; what it asserts is audited here instead, apart, and bounded by what was measured before this change
+    // (AuditFaceWindings):
+    //   -tjunc mwt (default)  reversed or flat by the whole winding: 44, every one a sliver (the T-junction pass's
+    //                         spikes, README: Known limits); CheckFaceNormal's three-point reading: 84
+    //   -tjunc none           reversed or flat: 0; three-point reading: 5 (windings whose first points are collinear
+    //                         to within its epsilon, not reversed)
+    for (const auto &[tjunc, reversed_at_most, three_point_at_most] :
+        {std::tuple<const char *, size_t, size_t>{"mwt", 44, 84}, std::tuple<const char *, size_t, size_t>{"none", 0, 5}}) {
+        SCOPED_TRACE(fmt::format("-tjunc {}", tjunc));
+        const auto prt_path = std::filesystem::path(testmaps_dir) / "q2_sculpt_tiny_node_portal.prt";
+        std::filesystem::remove(prt_path);
+        const mbsp_t bsp = CompileTestmapQ2WithoutCheckBsp("q2_sculpt_tiny_node_portal.map", {"-tjunc", tjunc});
+        EXPECT_TRUE(std::filesystem::exists(prt_path)) << "no portal file: the map leaked";
+        check(bsp);
+        const winding_audit_t audit = AuditFaceWindings(bsp, 0.5);
+        EXPECT_LE(audit.reversed, reversed_at_most);
+        EXPECT_LE(audit.three_point, three_point_at_most);
+        testing::Test::RecordProperty(fmt::format("tjunc_{}_reversed", tjunc), static_cast<int>(audit.reversed));
+        testing::Test::RecordProperty(fmt::format("tjunc_{}_three_point", tjunc), static_cast<int>(audit.three_point));
+    }
+}
