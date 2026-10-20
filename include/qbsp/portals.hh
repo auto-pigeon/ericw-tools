@@ -48,6 +48,9 @@ struct portal_t
 
     // false if ->side hasn't been checked
     bool sidefound;
+
+    // in tree.draw_only_portals only: an opening for the fills (KeepThinLeavesOpen), never drawn
+    bool fill_only = false;
 };
 
 // helper used for building the portals in paralllel.
@@ -61,12 +64,16 @@ struct buildportal_t
     winding_t winding;
     // a winding the tiny-portal rule drops, kept only to draw the face it bounds (see KeepTinyPortalForFaces)
     bool draw_only = false;
+    // a draw_only winding that is not drawn either: a tiny piece SplitNodePortals folded into the other child, kept
+    // only as an opening for the fills (see KeepThinLeavesOpen in outside.cc)
+    bool fill_only = false;
 };
 
 struct portalstats_t : logging::stat_tracker_t
 {
     stat &c_tinyportals = register_stat("tiny portals");
     stat &c_drawonlyportals = register_stat("tiny portals kept only to draw their faces");
+    stat &c_fillonlyportals = register_stat("folded tiny portals kept as openings for the fills");
 };
 
 contentflags_t ClusterContents(const node_t *node);

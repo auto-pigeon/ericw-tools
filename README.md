@@ -77,8 +77,8 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   T-junction pass's on-edge distance (`DEFAULT_ON_EPSILON`, 0.1) -- narrower, that pass threads one long edge's
   vertices into the other or into the next face and twists it (the 0.06 sides of a thin skin and of a water film:
   `testmapsQ1.leafGuardKeepsMaterial`, `sub002ObliqueSkin`). `testmapsQ2.sculptTinyNodePortalDrawn`,
-  `testmapsQ1.sculptTinyNodePortalDrawn`; `testmapsQ1.hairlineCrackPocketUnchanged` holds a 0.15 crack into a closed
-  pocket to what it was.
+  `testmapsQ1.sculptTinyNodePortalDrawn`; `testmapsQ1.hairlineCrackOpenPocketFilled` holds a 0.15 crack into a closed
+  pocket (its crack is now air: see the thin-leaf item below).
 
 - A collision hull no longer splits a node that lies wholly inside one brush. In hulls 1 and 2 every brush is plain
   SOLID, so such a node can only ever hold SOLID leaves, and `PruneNodes` folded them back into one; but `BuildTree_r`
@@ -90,6 +90,32 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   void-touching sides sees larger leaves), not in what they hold: hulls 0, 1 and 2 read the same contents as before at
   66 million jittered points over three such maps. `testmapsQ1.clipHullInsideOneBrushIsOneLeaf`
   (`testmaps/q1_clip_hull_hollow_tube.map`: past 300 s before, 12 s after; asserted from `-loghulls` statistics).
+
+- A face under a sliver leaf is drawn by its own brush. A leaf thinner than `PLANESIDE_EPSILON` between two nearly
+  coplanar split planes cannot be split again, so it can keep a fragment of a brush from the next cell of a heightfield
+  of facets and be solid, and the portal on it has no side of that leaf's brushes on it. `FindPortalSide` then textured
+  it with the nearest-normal side of the wrong brush, and the face was emitted on that brush's plane: an Auto-Pigeon
+  SURFACE DEFORM rock (res 16) lost one point in Quake 1 and Quake II, a SCULPT Detail export one in Quake II, drawn 0.027
+  and 0.054 off its facet and with another brush's texture, on every release up to 1.4530. When neither leaf has a side
+  on the portal, `FindNearerSideOneLeafAway` also asks the brushes one portal away from the solid leaf (the facet's own,
+  behind the sliver), under the same 0.1 bound and facing the open side, and takes a side only when it lies strictly
+  nearer the portal than the one chosen. `testmapsQ1.sliverOwnerDrawn`, `testmapsQ2.sliverOwnerDrawn` and
+  `testmapsQ1.sliverOwnerPerturbed` (`testmaps/q1_sliver_owner_heightfield.map` and its Quake II adapter: an authored,
+  seeded 16 x 16 heightfield; moved, turned 15 and 45 degrees, and one vertex raised and lowered by 1/1024).
+
+- A dead-end leaf thinner than the tiny-portal bound is no longer filled. Air joined to the rest only by portals the
+  tiny rule drops was filled with no brush in it: a pulled pipe's bore has 0.3-tall ring strips recessed up to 0.019
+  behind their neighbours' tilted faces, and splitting those faces' portals by the strip's plane left the strip-side piece
+  0.15 wide, so `SplitNodePortals` folded the whole portal onto the solid side -- the wedge of air in front of the strip
+  had no portal to the bore, the fill took it, and the strip was not drawn (5 of 6 undrawn points of AUT's
+  `pmx.q1.p04.pull.5d.ny`, release 1.4530). Such a folded piece is now kept as a **fill-only** opening (never drawn,
+  never linked), and both fills (`FillOutside`, `FillDetail`) keep a leaf open when it is unreached, not solid, thinner
+  than 0.2 (`EDGE_LENGTH_EPSILON`), every portal of its own leads to a solid leaf, and a draw-only or fill-only opening
+  leads to reached air (`KeepThinLeavesOpen`). Nothing is reached through it, so the leak test, VIS and the portal file
+  are what they were; its faces are listed in the leaves it opens to as well, or no PVS would show them.
+  `testmapsQ1.pipeThinWedgeDrawn` (`testmaps/q1_pipe_thin_wedge.map`, the crop of that map's stage S1). The 0.15 crack
+  of `q1_hairline_crack_pocket.map` is such a leaf: it is air now, its walls drawn; the closed pocket under it is still
+  filled (`testmapsQ1.hairlineCrackOpenPocketFilled`).
 
 #### Known limits
 
@@ -123,7 +149,11 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   of asserting `CheckBsp`.
 - **A face strip narrower than 0.1 units under a tiny portal is not drawn.** `KeepTinyPortalForFaces` keeps such a
   portal for its face only when the face is wider than the T-junction pass's on-edge distance; a 0.03 or 0.07 chamfer
-  and the 0.06 sides of a thin skin stay undrawn, as in every earlier release.
+  and the 0.06 sides of a thin skin stay undrawn, as in every earlier release. So does the sixth point of
+  `pmx.q1.p04.pull.5d.ny` (a piece 0.074 wide), and the authored heightfields of `testmapsQ1.sliverOwnerDrawn` show the
+  same gaps elsewhere (a face on the point's own plane ending 0.02-0.09 short of it), before and after the sliver repair.
+- **A closed space behind a crack thinner than 0.2 is filled.** Only the crack's own dead-end leaf is kept open
+  (`KeepThinLeavesOpen`); a larger space reached only through it is not reached, and is filled as before.
 
 Everything below the Auto-Pigeon sections is upstream's own README.
 

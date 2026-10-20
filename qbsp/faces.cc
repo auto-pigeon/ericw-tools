@@ -30,6 +30,7 @@
 #include <qbsp/tree.hh>
 #include <qbsp/writebsp.hh>
 
+#include <algorithm>
 #include <list>
 
 struct makefaces_stats_t : logging::stat_tracker_t
@@ -314,12 +315,39 @@ static void AddMarksurfaces_r(face_t *face, std::unique_ptr<face_t> face_copy, n
 
 /*
 ================
-MakeMarkFaces
+MarkFacesThroughDrawOnlyOpenings_r
+
+A leaf a fill kept open through draw-only portals (KeepThinLeavesOpen) has no portal VIS knows, so it is never in a
+PVS but its own: the leaves it opens to list its faces too, or nobody would see them.
+================
+*/
+static void MarkFacesThroughDrawOnlyOpenings_r(node_t *node)
+{
+    if (auto *nodedata = node->get_nodedata()) {
+        MarkFacesThroughDrawOnlyOpenings_r(nodedata->children[0]);
+        MarkFacesThroughDrawOnlyOpenings_r(nodedata->children[1]);
+        return;
+    }
+    auto *leafdata = node->get_leafdata();
+    for (node_t *open : leafdata->draw_only_openings) {
+        auto *opendata = open->get_leafdata();
+        for (face_t *face : leafdata->markfaces) {
+            if (std::find(opendata->markfaces.begin(), opendata->markfaces.end(), face) == opendata->markfaces.end()) {
+                opendata->markfaces.push_back(face);
+                face->markleafs.push_back(open);
+            }
+        }
+    }
+}
+
+/*
+================
+MakeMarkFaces_r
 
 Populates the `markfaces` vectors of all leafs
 ================
 */
-void MakeMarkFaces(node_t *node)
+static void MakeMarkFaces_r(node_t *node)
 {
     if (node->is_leaf()) {
         return;
@@ -336,8 +364,14 @@ void MakeMarkFaces(node_t *node)
     }
 
     // process child nodes recursively
-    MakeMarkFaces(nodedata->children[0]);
-    MakeMarkFaces(nodedata->children[1]);
+    MakeMarkFaces_r(nodedata->children[0]);
+    MakeMarkFaces_r(nodedata->children[1]);
+}
+
+void MakeMarkFaces(node_t *node)
+{
+    MakeMarkFaces_r(node);
+    MarkFacesThroughDrawOnlyOpenings_r(node);
 }
 
 //===========================================================================
@@ -813,6 +847,9 @@ void MakeFaces(tree_t &tree)
     // the draw-only portals' faces (KeepTinyPortalForFaces in portals.cc) go on their node before MakeFaces_r merges
     // that node's faces; as there, a solid leaf has no visible face
     for (auto &p : tree.draw_only_portals) {
+        if (p->fill_only) {
+            continue; // an opening for the fills only (KeepThinLeavesOpen)
+        }
         for (const bool pside : {false, true}) {
             if (p->nodes[pside]->get_leafdata()->contents.is_any_solid()) {
                 continue;

@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <limits>
 #include <list>
 #include <vector>
 #include <map>
@@ -424,6 +425,11 @@ struct leafdata_t
     contentflags_t contents; // leaf nodes (0 for decision nodes)
     std::vector<bspbrush_t *> original_brushes;
     bspbrush_t::container bsp_brushes;
+    // the least extent of the leaf's volume across one of its own planes (LeafNode); infinity when it had no volume
+    double min_width = std::numeric_limits<double>::infinity();
+    // the leaves this one opens to only through draw-only portals, when a fill kept it open (KeepThinLeavesOpen);
+    // MakeMarkFaces lists this leaf's faces in them too
+    std::vector<node_t *> draw_only_openings;
 };
 
 struct node_t

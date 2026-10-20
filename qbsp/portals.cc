@@ -481,7 +481,27 @@ static twosided<std::list<buildportal_t>> SplitNodePortals(
             kept.nodes = (side == SIDE_FRONT) ? twosided<node_t *>{child, other_node}
                                               : twosided<node_t *>{other_node, child};
             kept.draw_only = true;
+            kept.fill_only = p.fill_only;
             out.push_back(std::move(kept));
+        };
+
+        // a tiny piece folded into the other child below: that child's portal covers it for the faces, but the leaf
+        // on the piece's own side has no opening there any more. It is kept as a fill-only opening (never drawn, never
+        // linked) when it is a winding KeepTinyPortalForFaces would keep, and only KeepThinLeavesOpen reads it
+        auto keep_fill_only = [&](std::optional<winding_t> &piece, node_t *child, std::list<buildportal_t> &out) {
+            if (type != portaltype_t::TREE || !piece || !KeepTinyPortalForFaces(*piece)) {
+                return;
+            }
+            buildportal_t kept{};
+            kept.plane = p.plane;
+            kept.onnode = p.onnode;
+            kept.winding = std::move(*piece);
+            kept.nodes = (side == SIDE_FRONT) ? twosided<node_t *>{child, other_node}
+                                              : twosided<node_t *>{other_node, child};
+            kept.draw_only = true;
+            kept.fill_only = true;
+            out.push_back(std::move(kept));
+            stats.c_fillonlyportals++;
         };
 
         if (p.draw_only) {
@@ -516,6 +536,7 @@ static twosided<std::list<buildportal_t>> SplitNodePortals(
         }
 
         if (!frontwinding) {
+            keep_fill_only(tinyfront, f, result.front);
             if (side == SIDE_FRONT)
                 p.nodes = {b, other_node};
             else
@@ -525,6 +546,7 @@ static twosided<std::list<buildportal_t>> SplitNodePortals(
             continue;
         }
         if (!backwinding) {
+            keep_fill_only(tinyback, b, result.back);
             if (side == SIDE_FRONT)
                 p.nodes = {f, other_node};
             else
@@ -575,6 +597,7 @@ void MakePortalsFromBuildportals(tree_t &tree, std::list<buildportal_t> &buildpo
             kept->onnode = buildportal.onnode;
             kept->winding = std::move(buildportal.winding);
             kept->nodes = buildportal.nodes;
+            kept->fill_only = buildportal.fill_only;
             continue;
         }
         portal_t *new_portal = tree.create_portal();
@@ -1215,6 +1238,68 @@ struct visible_faces_stats_t : logging::stat_tracker_t
 
 /*
 ============
+FindNearerSideOneLeafAway
+
+FindPortalSide found no brush of either leaf with a side on the portal, and textures it with the side whose normal is
+nearest, up to 0.1 away. A leaf thinner than PLANESIDE_EPSILON cannot be split again (its caps are degenerate), so its
+contents can come from a fragment of a brush that only reaches into part of it: a corner of the next cell of a
+heightfield of nearly coplanar facets, left in the sliver between two of their planes (NEW_328A). The portal on such a
+leaf lies on the surface of a brush ONE PORTAL AWAY -- the facet's own, behind the sliver -- and the nearest-normal side
+of the leaf's own brushes is another brush's, several hundredths away: the face was drawn on that plane and with that
+brush's texture, and the facet's own surface not at all.
+
+So the brushes of the leaves one portal from the solid leaf are asked too, under the same 0.1 bound and only for a side
+facing out of it through the portal; one is taken only when its side lies strictly nearer the portal than the side
+FindPortalSide chose (or there was none). Otherwise nothing changes.
+============
+*/
+static void FindNearerSideOneLeafAway(portal_t *p, const contentflags_t &viscontents, side_t *bestside[2])
+{
+    const qvec3d &normal = p->onnode->get_nodedata()->get_plane().get_normal();
+    double nearest[2];
+    for (int i = 0; i < 2; ++i) {
+        nearest[i] = bestside[i] ? p->winding.max_dist_off_plane(bestside[i]->get_plane())
+                                 : std::numeric_limits<double>::infinity();
+    }
+    for (int j = 0; j < 2; j++) {
+        node_t *n = p->nodes[j];
+        if (n->get_leafdata()->contents.is_empty()) {
+            continue;
+        }
+        int s;
+        for (portal_t *q = n->portals; q; q = q->next[!s]) {
+            s = (q->nodes[0] == n);
+            node_t *m = q->nodes[s];
+            if (q == p || !m->is_leaf() || m->get_leafdata()->contents.is_empty()) {
+                continue;
+            }
+            for (auto it = m->get_leafdata()->original_brushes.rbegin(); it != m->get_leafdata()->original_brushes.rend();
+                ++it) {
+                auto *brush = *it;
+                if (!contentflags_t::portal_generates_face(viscontents, brush->contents, SIDE_FRONT)) {
+                    continue;
+                }
+                for (auto &side : brush->sides) {
+                    if (side.bevel) {
+                        continue;
+                    }
+                    // facing out of leaf j through the portal: nodes[0] is on the plane's front
+                    if (qv::dot(normal, side.get_plane().get_normal()) * (j == 1 ? 1.0 : -1.0) <= 0) {
+                        continue;
+                    }
+                    const double dist = p->winding.max_dist_off_plane(side.get_plane());
+                    if (dist <= 0.1 && dist < nearest[!j]) {
+                        nearest[!j] = dist;
+                        bestside[!j] = &side;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/*
+============
 FindPortalSide
 
 Finds a brush side to use for texturing the given portal
@@ -1308,6 +1393,10 @@ static void FindPortalSide(portal_t *p, visible_faces_stats_t &stats)
         }
     }
 
+    if (!exactside[0] && !exactside[1]) {
+        FindNearerSideOneLeafAway(p, viscontents, bestside);
+    }
+
     // take exact sides over best sides
     for (int i = 0; i < 2; ++i) {
         if (exactside[i]) {
@@ -1386,6 +1475,9 @@ void MarkVisibleSides(tree_t &tree, bspbrush_t::container &brushes)
     // and by the draw-only portals, examined as MarkVisibleSides_r examines a linked one: from a leaf that is not
     // empty
     for (auto &p : tree.draw_only_portals) {
+        if (p->fill_only) {
+            continue;
+        }
         if (p->nodes[0]->get_leafdata()->contents.is_empty() && p->nodes[1]->get_leafdata()->contents.is_empty()) {
             continue;
         }

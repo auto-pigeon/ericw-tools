@@ -391,6 +391,19 @@ static void LeafNode(node_t *leafnode, bspbrush_t::container brushes, bspstats_t
         leafdata->original_brushes.push_back(brush->original_brush());
     }
 
+    // how thin the leaf is (KeepThinLeavesOpen): its least extent across one of its own planes
+    if (leafnode->volume) {
+        for (auto &side : leafnode->volume->sides) {
+            double depth = 0;
+            for (auto &other : leafnode->volume->sides) {
+                for (auto &point : other.w) {
+                    depth = std::max(depth, -side.get_plane().distance_to(point));
+                }
+            }
+            leafdata->min_width = std::min(leafdata->min_width, depth);
+        }
+    }
+
     stats.leafstats.count_contents_in_stats(leafdata->contents);
 
     if (qbsp_options.debugleak.value() || qbsp_options.debugbspbrushes.value()) {

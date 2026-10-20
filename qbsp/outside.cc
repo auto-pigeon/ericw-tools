@@ -21,6 +21,7 @@
 
 #include <qbsp/outside.hh>
 #include <qbsp/brush.hh>
+#include <qbsp/brushbsp.hh>
 #include <qbsp/map.hh>
 #include <qbsp/portals.hh>
 #include <qbsp/prtfile.hh>
@@ -29,6 +30,7 @@
 
 #include <common/log.hh>
 #include <common/ostream.hh>
+#include <algorithm>
 #include <climits>
 #include <vector>
 #include <set>
@@ -112,6 +114,7 @@ static void ClearOccupied_r(node_t *node)
     leafdata->outside_distance = -1;
     leafdata->occupied = 0;
     leafdata->occupant = nullptr;
+    leafdata->draw_only_openings.clear();
 }
 
 static bool OutsideFill_Passable(const portal_t *p)
@@ -675,6 +678,77 @@ get incorrectly marked as "invisible").
 Special cases: structural fully covered by detail still needs to be marked "visible".
 ===========
 */
+/*
+==================
+KeepThinLeavesOpen
+
+Called by a fill after its flood from the occupants, before it fills what was not reached.
+
+The tiny-portal rule keeps the floods out of portals narrower than EDGE_LENGTH_EPSILON, which is what keeps a hairline
+crack from leaking. A leaf thinner than that bound can be joined to the air round it by such portals only: a draw-only
+portal, or a tiny piece SplitNodePortals folded into the other child (kept as a fill-only opening). Unreached, it was
+filled although no brush is in it, and the face of the brush behind it went with it: the 0.3-tall ring strips of a
+pulled pipe's bore, recessed 0.019 behind their neighbours' tilted faces, were never drawn that way (NEW_328A).
+
+Such a leaf stays open when it is not reached, does not seal, is thinner than EDGE_LENGTH_EPSILON, has a draw-only or
+fill-only portal to a reached leaf, and every portal of its own leads to a leaf that seals (or it would be part of a
+larger unreached space, which is filled as before). Nothing beyond it is reached through it, and the floods' portals,
+the leak test, VIS and the portal file are what they were. The leaves it opens to are recorded for MakeMarkFaces.
+==================
+*/
+struct thin_leaves_stats_t : logging::stat_tracker_t
+{
+    stat &kept = register_stat("thin leaves kept open through draw-only portals");
+};
+
+static void KeepThinLeavesOpen(tree_t &tree, bool (*seals)(const node_t *))
+{
+    thin_leaves_stats_t stats;
+    for (auto &p : tree.draw_only_portals) {
+        for (int i = 0; i < 2; i++) {
+            node_t *leaf = p->nodes[i];
+            node_t *open = p->nodes[!i];
+            if (leaf == &tree.outside_node || open == &tree.outside_node) {
+                continue;
+            }
+            auto *leafdata = leaf->get_leafdata();
+            const auto *opendata = open->get_leafdata();
+            if (leafdata->occupied != 0 || opendata->occupied <= 0 || seals(leaf) ||
+                !(leafdata->min_width < EDGE_LENGTH_EPSILON)) {
+                continue;
+            }
+            bool dead_end = true;
+            int side;
+            for (portal_t *q = leaf->portals; q; q = q->next[!side]) {
+                side = (q->nodes[0] == leaf);
+                const node_t *other = q->nodes[side];
+                if (other == &tree.outside_node || !seals(other)) {
+                    dead_end = false;
+                    break;
+                }
+            }
+            if (!dead_end) {
+                continue;
+            }
+            if (std::find(leafdata->draw_only_openings.begin(), leafdata->draw_only_openings.end(), open) ==
+                leafdata->draw_only_openings.end()) {
+                if (leafdata->draw_only_openings.empty()) {
+                    stats.kept++;
+                }
+                leafdata->draw_only_openings.push_back(open);
+            }
+        }
+    }
+    // only now, so that a leaf kept open never lets another one be kept through it
+    for (auto &p : tree.draw_only_portals) {
+        for (node_t *leaf : {p->nodes[0], p->nodes[1]}) {
+            if (leaf != &tree.outside_node && !leaf->get_leafdata()->draw_only_openings.empty()) {
+                leaf->get_leafdata()->occupied = INT_MAX;
+            }
+        }
+    }
+}
+
 bool FillOutside(tree_t &tree, hull_index_t hullnum, bspbrush_t::container &brushes)
 {
     Q_assert(tree.portaltype == portaltype_t::TREE);
@@ -784,6 +858,10 @@ bool FillOutside(tree_t &tree, hull_index_t hullnum, bspbrush_t::container &brus
         return false;
     }
 
+    if (filltype == settings::filltype_t::INSIDE) {
+        KeepThinLeavesOpen(tree, LeafSealsMap);
+    }
+
     // change the leaf contents
     outleafs_stats_t stats;
     OutLeafsToSolid_R(node, filltype, stats);
@@ -847,6 +925,7 @@ void FillDetail(tree_t &tree, hull_index_t hullnum, bspbrush_t::container &brush
     }
 
     BFSFloodFillFromOccupiedLeafs(occupied_leafs, DetailFill_Passable);
+    KeepThinLeavesOpen(tree, LeafSealsForDetailFill);
 
     // change the leaf contents
     detail_filled_leafs_stats_t stats;
