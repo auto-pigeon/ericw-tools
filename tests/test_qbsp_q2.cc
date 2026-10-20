@@ -7,7 +7,9 @@
 #include <common/bsputils.hh>
 #include <common/qvec.hh>
 
+#include <cstdio>
 #include <cstring>
+#include <functional>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -1618,6 +1620,52 @@ winding_audit_t AuditFaceWindings(const mbsp_t &bsp, double max_area)
     return audit;
 }
 
+const mface_t *FaceDrawingPoint(const mbsp_t &bsp, const qvec3d &point, const qvec3d &normal, double tolerance)
+{
+    for (size_t i = bsp.dmodels[0].firstface; i < bsp.dmodels[0].firstface + bsp.dmodels[0].numfaces; i++) {
+        const mface_t *face = &bsp.dfaces[i];
+        if (qv::dot(Face_Normal(&bsp, face), normal) <= 0.9999) {
+            continue;
+        }
+        const qplane3f plane = Face_Plane(&bsp, face);
+        if (std::fabs(qv::dot(qvec3d(plane.normal), point) - plane.dist) > tolerance) {
+            continue;
+        }
+        // inside its winding: on the inner side of every edge's plane, in the face's own plane
+        if (EdgePlanes_PointInsideDist(MakeInwardFacingEdgePlanes(Face_Points(&bsp, face)), qvec3f(point)) >= 0) {
+            return face;
+        }
+    }
+    return nullptr;
+}
+
+std::string TransformMapPoints(const std::string &map_text, const std::function<qvec3d(const qvec3d &)> &transform)
+{
+    std::string out;
+    out.reserve(map_text.size());
+    size_t at = 0;
+    while (true) {
+        const size_t open = map_text.find("( ", at);
+        if (open == std::string::npos) {
+            break;
+        }
+        const size_t close = map_text.find(" )", open);
+        qvec3d p;
+        if (close == std::string::npos ||
+            std::sscanf(map_text.substr(open + 2, close - open - 2).c_str(), "%lf %lf %lf", &p[0], &p[1], &p[2]) != 3) {
+            out += map_text.substr(at, open + 2 - at);
+            at = open + 2;
+            continue;
+        }
+        const qvec3d q = transform(p);
+        out += map_text.substr(at, open - at);
+        out += fmt::format("( {:.6f} {:.6f} {:.6f} )", q[0], q[1], q[2]);
+        at = close + 2;
+    }
+    out += map_text.substr(at);
+    return out;
+}
+
 // the +y strip, the one the reduction kept (its mirror at -y lost its brushes on the way)
 static const std::pair<qvec3d, qvec3d> sculpt_tiny_node_portal_strips[] = {
     {{-25.078720405533833, 56.56854299524737, 288.09104809166075},
@@ -1666,5 +1714,40 @@ TEST(testmapsQ2, sculptTinyNodePortalDrawn)
         EXPECT_LE(audit.three_point, three_point_at_most);
         testing::Test::RecordProperty(fmt::format("tjunc_{}_reversed", tjunc), static_cast<int>(audit.reversed));
         testing::Test::RecordProperty(fmt::format("tjunc_{}_three_point", tjunc), static_cast<int>(audit.three_point));
+    }
+}
+
+/* NEW_328A: the two points of testmaps/q2_sliver_owner_heightfield.map that release 1.4530 drew on another brush's plane,
+   and the facet they are on (shared by q1_sliver_owner_heightfield.map) */
+static const qvec3d sliver_owner_normal{0.005533653616743923, 0.0058591430458163766, 0.999967524032865};
+static const qvec3d sliver_owner_points[] = {{52.7, 57.4, 8.05465525}, {53.4, 58.8, 8.0425785}};
+
+TEST(testmapsQ2, sliverOwnerDrawn)
+{
+    // NEW_328A. An authored heightfield: 16 x 16 cells, each two triangular prisms under a facet, the facets nearly
+    // coplanar. Split planes from neighbouring facets meet at small angles, and a leaf between two of them, thinner than
+    // PLANESIDE_EPSILON, cannot be split again: the solid leaf behind the portal these points lie on holds only a
+    // fragment of another cell's brush (map line 2195), none of the facet's own (line 1971). FindPortalSide gave the
+    // portal that brush's top, 0.7 degrees off and 0.073 from the portal at its farthest, and the face was emitted on that
+    // plane: 0.034 and 0.055 from the points (the class of AUT's surface matrix smx.q2.s09.rock.res16 S1/S2 and of the live
+    // SCULPT Detail export of Q2_012A, on every release up to 1.4530). The facet's own brush is one portal away and its
+    // side lies on the portal. Each point must be drawn on its own facet's plane with its texture and texel mapping, air
+    // in front and the facet's brush behind, and the compile must seal.
+    const auto prt_path = std::filesystem::path(testmaps_dir) / "q2_sliver_owner_heightfield.prt";
+    std::filesystem::remove(prt_path);
+    const mbsp_t bsp = CompileTestmapQ2WithoutCheckBsp("q2_sliver_owner_heightfield.map", {});
+    EXPECT_TRUE(std::filesystem::exists(prt_path)) << "no portal file: the map leaked";
+    const dmodelh2_t *world = &bsp.dmodels[0];
+    for (const qvec3d &point : sliver_owner_points) {
+        SCOPED_TRACE(fmt::format("point {}", point));
+        EXPECT_EQ(Q2_CONTENTS_EMPTY, BSP_FindLeafAtPoint(&bsp, world, point + sliver_owner_normal * 0.25)->contents);
+        EXPECT_EQ(Q2_CONTENTS_SOLID, BSP_FindLeafAtPoint(&bsp, world, point - sliver_owner_normal * 0.25)->contents);
+        const mface_t *face = FaceDrawingPoint(bsp, point, sliver_owner_normal);
+        ASSERT_NE(nullptr, face);
+        EXPECT_STREQ("e1u1/ggrat4_2", Face_TextureName(&bsp, face));
+        // "0 0 0 1 1" on a nearly +Z facet: the classic projection's s = x, t = -y
+        const qvec2f st = Face_WorldToTexCoord(&bsp, face, point);
+        EXPECT_NEAR(point[0], st[0], 0.01);
+        EXPECT_NEAR(-point[1], st[1], 0.01);
     }
 }

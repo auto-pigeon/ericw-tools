@@ -1,7 +1,9 @@
 #include <common/bspfile.hh>
 #include <common/prtfile.hh>
 #include <common/litfile.hh>
+#include <common/qvec.hh>
 
+#include <functional>
 #include <string>
 #include <vector>
 #include <map>
@@ -29,6 +31,11 @@ struct winding_audit_t
     size_t reversed = 0; // the whole winding's (Newell) normal does: really reversed, or flat
 };
 winding_audit_t AuditFaceWindings(const mbsp_t &bsp, double max_area);
+// NEW_328A (defined in test_qbsp_q2.cc): the face that draws `point` -- it faces `normal`, its own plane passes within
+// `tolerance` of the point (AUT's drawn-surface reading asks 0.02), and the point is inside its winding. nullptr if none
+const mface_t *FaceDrawingPoint(const mbsp_t &bsp, const qvec3d &point, const qvec3d &normal, double tolerance = 0.02);
+// NEW_328A (defined in test_qbsp_q2.cc): `map_text` with every "( x y z )" plane point replaced by `transform(point)`
+std::string TransformMapPoints(const std::string &map_text, const std::function<qvec3d(const qvec3d &)> &transform);
 void CheckFilled(const mbsp_t &bsp, hull_index_t hullnum);
 void CheckFilled(const mbsp_t &bsp);
 std::map<std::string, std::vector<const mface_t *>> MakeTextureToFaceMap(const mbsp_t &bsp);

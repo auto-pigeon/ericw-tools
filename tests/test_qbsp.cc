@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <functional>
+#include <iterator>
 #include <cstring>
 #include <stdexcept>
 #include <tuple>
@@ -4114,13 +4116,15 @@ TEST(testmapsQ1, sculptTinyNodePortalDrawn)
     }
 }
 
-TEST(testmapsQ1, hairlineCrackPocketUnchanged)
+TEST(testmapsQ1, hairlineCrackOpenPocketFilled)
 {
-    // NEW_328 control for sculptTinyNodePortalDrawn: a portal the tiny rule drops may draw its face, and nothing else.
-    // A closed pocket under the floor is joined to the room only by a 0.15-wide crack, so every portal into the crack
-    // is tiny. The flood that decides what is outside does not cross those portals, so the room does not leak through
-    // the crack, and the crack and the pocket are filled exactly as a hairline gap always has been (README: Known
-    // limits). No face is drawn inside them, and the floor round the crack is drawn.
+    // NEW_328 control for sculptTinyNodePortalDrawn, revised by NEW_328A. A closed pocket under the floor is joined to
+    // the room only by a 0.15-wide crack, so every portal into the crack is tiny. The flood that decides what is outside
+    // does not cross those portals, so the room does not leak through the crack, and nothing is reached through it.
+    // Until NEW_328A the crack was filled with the pocket. The crack is air in the map, thinner than the tiny limit, and
+    // opens to the room through draw-only portals only; FillOutside now keeps such a dead-end leaf open (and only it --
+    // never what lies beyond it), so the crack is air with its walls drawn, and the pocket is still filled (README:
+    // Known limits). No face is drawn inside the pocket, and the floor round the crack is drawn.
     for (const std::vector<std::string> &extra_args :
         {std::vector<std::string>{"-leaktest"}, std::vector<std::string>{"-leaktest", "-forcegoodtree"}}) {
         SCOPED_TRACE(extra_args.back());
@@ -4129,17 +4133,154 @@ TEST(testmapsQ1, hairlineCrackPocketUnchanged)
         ASSERT_TRUE(prt.has_value());
 
         EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 0, world, {-100, -100, 40}));
-        for (const qvec3d &filled : {qvec3d{32, 0, -32}, qvec3d{-32, 0, -32}, qvec3d{0.075, 0, -8}, qvec3d{0.075, 0, -0.5}}) {
-            SCOPED_TRACE(fmt::format("crack or pocket {}", filled));
+        for (const qvec3d &filled : {qvec3d{32, 0, -32}, qvec3d{-32, 0, -32}}) {
+            SCOPED_TRACE(fmt::format("pocket {}", filled));
             EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 0, world, filled));
         }
+        for (const qvec3d &air : {qvec3d{0.075, 0, -8}, qvec3d{0.075, 0, -0.5}}) {
+            SCOPED_TRACE(fmt::format("crack {}", air));
+            EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 0, world, air));
+        }
+        EXPECT_NE(nullptr, Q1FaceOnPlaneAtPoint(bsp, {0, 0, -8}, {1, 0, 0})) << "the crack's west wall";
+        EXPECT_NE(nullptr, Q1FaceOnPlaneAtPoint(bsp, {0.15, 0, -8}, {-1, 0, 0})) << "the crack's east wall";
         for (const mface_t &face : bsp.dfaces) {
             for (const auto &v : Face_Points(&bsp, &face)) {
-                EXPECT_GT(v[2], -0.01) << "a face below the floor's top, in the crack or the pocket";
+                EXPECT_GT(v[2], -16.01) << "a face below the crack, in the pocket";
             }
         }
         EXPECT_NE(nullptr, Q1FaceOnPlaneAtPoint(bsp, {-32, 0, 0}, {0, 0, 1}));
         EXPECT_NE(nullptr, Q1FaceOnPlaneAtPoint(bsp, {32, 0, 0}, {0, 0, 1}));
+    }
+}
+
+/* NEW_328A: as testmapsQ2.sliverOwnerDrawn's (test_qbsp_q2.cc), on the Quake 1 adapter of the same heightfield */
+static const qvec3d q1_sliver_owner_normal{0.005533653616743923, 0.0058591430458163766, 0.999967524032865};
+static const qvec3d q1_sliver_owner_points[] = {{52.7, 57.4, 8.05465525}, {53.4, 58.8, 8.0425785}};
+
+static void CheckSliverOwnerPoint(const mbsp_t &bsp, const qvec3d &point, const qvec3d &normal, const char *texture)
+{
+    SCOPED_TRACE(fmt::format("point {}", point));
+    const dmodelh2_t *world = &bsp.dmodels[0];
+    EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 0, world, point + normal * 0.25));
+    EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 0, world, point - normal * 0.25));
+    const mface_t *face = FaceDrawingPoint(bsp, point, normal);
+    ASSERT_NE(nullptr, face);
+    EXPECT_STREQ(texture, Face_TextureName(&bsp, face));
+}
+
+TEST(testmapsQ1, sliverOwnerDrawn)
+{
+    // NEW_328A. testmapsQ2.sliverOwnerDrawn's heightfield compiled as Quake 1 (the same planes): release 1.4530 drew both
+    // points on another brush's plane, 0.034 and 0.055 away, in both tree modes (AUT surface matrix smx.q1.s09.rock.res16 S1/S2,
+    // the same class). Each must be drawn on its own facet's plane, with its texture and the classic texel mapping
+    // ("0 0 0 1 1" on a nearly +Z facet: s = x, t = -y), air in front and the facet's brush behind.
+    for (const std::vector<std::string> &extra_args : {std::vector<std::string>{}, std::vector<std::string>{"-forcegoodtree"}}) {
+        SCOPED_TRACE(extra_args.empty() ? "default tree" : extra_args.back());
+        const auto prt_path = std::filesystem::path(testmaps_dir) / "q1_sliver_owner_heightfield.prt";
+        std::filesystem::remove(prt_path);
+        const mbsp_t bsp = CompileTestmapQ1WithoutCheckBsp("q1_sliver_owner_heightfield.map", extra_args);
+        EXPECT_TRUE(std::filesystem::exists(prt_path)) << "no portal file: the map leaked";
+        for (const qvec3d &point : q1_sliver_owner_points) {
+            CheckSliverOwnerPoint(bsp, point, q1_sliver_owner_normal, "bolt9");
+            if (const mface_t *face = FaceDrawingPoint(bsp, point, q1_sliver_owner_normal)) {
+                const qvec2f st = Face_WorldToTexCoord(&bsp, face, point);
+                EXPECT_NEAR(point[0], st[0], 0.01);
+                EXPECT_NEAR(-point[1], st[1], 0.01);
+            }
+        }
+    }
+}
+
+TEST(testmapsQ1, sliverOwnerPerturbed)
+{
+    // NEW_328A: the same heightfield moved by representable amounts, turned 15 and 45 degrees about the room's middle,
+    // and with the facet's own vertex (54, 54) raised and lowered by 1/1024 either side of the decision. The literal
+    // expectation is the source's: the two points, carried by the same transform, are drawn on their own facet. None of
+    // these is required to have failed before; they are where the original failure sits.
+    const std::string original = [] {
+        std::ifstream in(std::filesystem::path(testmaps_dir) / "q1_sliver_owner_heightfield.map");
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    }();
+    const qvec3d middle{48, 48, 0};
+    auto turn = [&](double degrees) {
+        const double a = degrees * Q_PI / 180.0, c = std::cos(a), s = std::sin(a);
+        return [=](const qvec3d &p) {
+            const qvec3d d = p - middle;
+            return middle + qvec3d{c * d[0] - s * d[1], s * d[0] + c * d[1], d[2]};
+        };
+    };
+    auto lift = [](double dz) {
+        return [=](const qvec3d &p) {
+            // the heightfield's vertex (54, 54) on the facets' plane points only, not the prisms' vertical sides
+            return (std::fabs(p[0] - 54) < 1e-9 && std::fabs(p[1] - 54) < 1e-9 && p[2] > 1 && p[2] < 32) ? p + qvec3d{0, 0, dz} : p;
+        };
+    };
+    const std::vector<std::pair<std::string, std::function<qvec3d(const qvec3d &)>>> cases{
+        {"exact", [](const qvec3d &p) { return p; }},
+        {"moved", [](const qvec3d &p) { return p + qvec3d{0.125, -0.375, 0.25}; }},
+        {"turned 15", turn(15)},
+        {"turned 45", turn(45)},
+        {"vertex up 1/1024", lift(1.0 / 1024)},
+        {"vertex down 1/1024", lift(-1.0 / 1024)},
+    };
+    const auto dir = std::filesystem::temp_directory_path() / "ericw-tools-tests-new328a";
+    std::filesystem::create_directories(dir);
+    for (const auto &[name, transform] : cases) {
+        SCOPED_TRACE(name);
+        const auto map_path = dir / "sliver_owner.map";
+        std::ofstream(map_path) << TransformMapPoints(original, transform);
+        auto prt_path = map_path;
+        prt_path.replace_extension(".prt");
+        std::filesystem::remove(prt_path);
+        // an absolute path: CompileTestmapQ1WithoutCheckBsp's testmaps_dir / path is the path itself
+        const mbsp_t bsp = CompileTestmapQ1WithoutCheckBsp(map_path, {"-forcegoodtree", "-wadpath", std::string(testmaps_dir)});
+        ASSERT_TRUE(std::filesystem::exists(prt_path)) << "the map leaked";
+        const qvec3d n = qv::normalize(transform(q1_sliver_owner_normal + middle) - transform(middle));
+        for (const qvec3d &point : q1_sliver_owner_points) {
+            CheckSliverOwnerPoint(bsp, transform(point), n, "bolt9");
+        }
+    }
+}
+
+TEST(testmapsQ1, pipeThinWedgeDrawn)
+{
+    // NEW_328A. AUT's PIPES P04 large pull (pmx.q1.p04.pull.5d.ny S1), cropped: the bore's 0.3-tall ring strips at
+    // z -48..-47.7 are recessed up to 0.019 behind their neighbours' tilted faces. Splitting those faces' big portals by
+    // the strip's plane leaves the strip-side piece tiny (0.15 wide), and SplitNodePortals folds the whole portal onto
+    // the solid side: the 0.019-deep wedge of air in front of the strip had no portal to the bore at all, the outside
+    // fill filled it, and the strip was never drawn (release 1.4530: these 9 points; the uncropped map: 5 of its 6).
+    // The wedge is air: it must be open, the strip drawn on its own plane, the bore round it open and the tilted faces
+    // above and below it still drawn.
+    const qvec3d strip{-0.3090170274757335, 0.9510565055400555, 0};
+    const qvec3d points[] = {{-42.800679, -64.001865, -47.85}, {-44.62044135, -64.5931417, -47.9025},
+        {-46.4402037, -65.1844184, -47.955}, {-44.62044135, -64.5931417, -47.7975},
+        {-46.4402037, -65.1844184, -47.745}, {-40.98091665, -63.4105883, -47.7975},
+        {-39.1611543, -62.8193116, -47.745}, {-40.98091665, -63.4105883, -47.9025}, {-39.1611543, -62.8193116, -47.955}};
+    // the strip's neighbours: the tilted face below (z < -48) and above (z > -47.7), each at the point of its own plane
+    // nearest the third point's line, 0.2 past the strip's edge
+    const std::pair<qvec3d, qvec3d> neighbours[] = {
+        {{-46.432585, -65.207866, -48.196913}, {-0.3066228041836681, 0.9436880548771767, -0.12423892721959068}},
+        {{-46.432223, -65.208981, -47.503393}, {-0.30638479431919663, 0.9429554036181137, 0.13024386587238593}}};
+    for (const std::vector<std::string> &extra_args : {std::vector<std::string>{}, std::vector<std::string>{"-forcegoodtree"}}) {
+        SCOPED_TRACE(extra_args.empty() ? "default tree" : extra_args.back());
+        const auto prt_path = std::filesystem::path(testmaps_dir) / "q1_pipe_thin_wedge.prt";
+        std::filesystem::remove(prt_path);
+        const mbsp_t bsp = CompileTestmapQ1WithoutCheckBsp("q1_pipe_thin_wedge.map", extra_args);
+        EXPECT_TRUE(std::filesystem::exists(prt_path)) << "no portal file: the map leaked";
+        const dmodelh2_t *world = &bsp.dmodels[0];
+        for (const qvec3d &point : points) {
+            SCOPED_TRACE(fmt::format("point {}", point));
+            EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 0, world, point + strip * 0.003)) << "the wedge";
+            EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 0, world, point + strip * 0.25)) << "the bore";
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 0, world, point - strip * 0.1));
+            const mface_t *face = FaceDrawingPoint(bsp, point, strip);
+            ASSERT_NE(nullptr, face);
+            EXPECT_STREQ("bolt9", Face_TextureName(&bsp, face));
+        }
+        for (const auto &[point, normal] : neighbours) {
+            SCOPED_TRACE(fmt::format("neighbour {}", point));
+            EXPECT_NE(nullptr, FaceDrawingPoint(bsp, point, normal));
+        }
     }
 }
 
