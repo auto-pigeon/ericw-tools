@@ -80,6 +80,17 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   `testmapsQ1.sculptTinyNodePortalDrawn`; `testmapsQ1.hairlineCrackPocketUnchanged` holds a 0.15 crack into a closed
   pocket to what it was.
 
+- A collision hull no longer splits a node that lies wholly inside one brush. In hulls 1 and 2 every brush is plain
+  SOLID, so such a node can only ever hold SOLID leaves, and `PruneNodes` folded them back into one; but `BuildTree_r`
+  went on splitting it on every plane of every other brush it overlapped. A hollow pipe's thin wall pieces, expanded by
+  16 or 32 units, overlap one another by tens of units: on an 806-brush Auto-Pigeon PIPES map hull 1 grew 4,115,875
+  leaves before pruning (14,309 after), and `qbsp -forcegoodtree` ran past 1,800 s and 11.3 GB where EricW 0.18.1 takes
+  8 s. `NodeInsideOneSolidBrush` (`tree_t::clip_hull`, set only for hulls 1 and up) makes such a node a leaf: that map in
+  99 s and 0.54 GB, a 248-brush one 70 s to 6.4 s. The exported clipnodes differ in layout (the flood that marks
+  void-touching sides sees larger leaves), not in what they hold: hulls 0, 1 and 2 read the same contents as before at
+  66 million jittered points over three such maps. `testmapsQ1.clipHullInsideOneBrushIsOneLeaf`
+  (`testmaps/q1_clip_hull_hollow_tube.map`: past 300 s before, 12 s after; asserted from `-loghulls` statistics).
+
 #### Known limits
 
 - **A whole brush thinner than 0.001 units (`PLANESIDE_EPSILON`) is dropped.** It does not reach past its own far plane,

@@ -53,6 +53,10 @@ struct tree_t
     // which kind of portals (cluster portals or leaf portals) are currently built?
     portaltype_t portaltype = portaltype_t::NONE;
 
+    // a collision hull (Q1 hull 1, 2, ...): every brush in it is plain SOLID, so BuildTree_r makes a node that lies
+    // wholly inside one brush a leaf rather than splitting it further (see NodeInsideOneSolidBrush). Kept by clear().
+    bool clip_hull = false;
+
     // here for ownership/memory management - not intended to be iterated directly
     //
     // concurrent_vector allows BrushBSP to insert nodes in parallel, and also

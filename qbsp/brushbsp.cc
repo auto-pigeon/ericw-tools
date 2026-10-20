@@ -74,6 +74,8 @@ struct bspstats_t : logging::stat_tracker_t
     stat &c_tinyvolumes = register_stat("tiny volumes removed after splits");
     // brush fragments left in a leaf whose middle is outside their brush (see LeafNode)
     stat &c_leafnotinbrush = register_stat("brush fragments not filling their leaf");
+    // collision-hull nodes made leaves because they lie wholly inside one solid brush (see NodeInsideOneSolidBrush)
+    stat &c_solidcover = register_stat("collision-hull nodes inside one solid brush");
 };
 
 /*
@@ -1291,9 +1293,71 @@ BuildTree_r
 Called in parallel.
 ==================
 */
+/*
+==================
+NodeInsideOneSolidBrush
+
+True when every corner of the node's volume lies inside one solid brush of the node (within PLANESIDE_EPSILON, the
+distance by which SplitBrush already lets a brush poke past a plane uncut). The volume is convex, so its corners
+inside a convex brush put all of it inside.
+
+Asked only of a collision hull (tree_t::clip_hull). There every brush is plain SOLID (Brush_LoadEntity), so a node
+inside one of them can only ever hold SOLID leaves however it is split: LeafNode gives each of them that brush's
+contents, its middle being inside the brush. Splitting it anyway is what made the hull of a hollow pipe, whose
+expanded wall pieces overlap one another by tens of units, millions of SOLID leaves that PruneNodes then folded back
+into one (NEW_329: 4,115,875 leaves before pruning in hull 1 of a 806-brush pipe, 14,309 after). PruneNodes merges
+exactly such a subtree into a single SOLID leaf, so the exported clipnodes are those the split would have pruned to.
+==================
+*/
+static bool NodeInsideOneSolidBrush(const node_t *node, const bspbrush_t::container &brushes)
+{
+    if (!node->volume) {
+        return false;
+    }
+    aabb3d extent;
+    for (auto &side : node->volume->sides) {
+        for (auto &point : side.w) {
+            extent += point;
+        }
+    }
+    for (auto &brush : brushes) {
+        if (!brush->contents.is_any_solid()) {
+            continue;
+        }
+        const bspbrush_t *original = brush->original_brush();
+        if (!original->bounds.grow(PLANESIDE_EPSILON).contains(extent)) {
+            continue;
+        }
+        bool inside = true;
+        for (auto &side : node->volume->sides) {
+            for (auto &point : side.w) {
+                if (!original->contains_point(point, PLANESIDE_EPSILON)) {
+                    inside = false;
+                    break;
+                }
+            }
+            if (!inside) {
+                break;
+            }
+        }
+        if (inside) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void BuildTree_r(tree_t &tree, int level, node_t *node, bspbrush_t::container brushes, tree_split_t split_type,
     bspstats_t &stats, logging::percent_clock &clock)
 {
+    if (tree.clip_hull && NodeInsideOneSolidBrush(node, brushes)) {
+        clock();
+        stats.c_solidcover++;
+        stats.c_leafs++;
+        LeafNode(node, std::move(brushes), stats);
+        return;
+    }
+
     // find the best plane to use as a splitter
     auto *bestside = SelectSplitPlane(brushes, node, split_type, stats);
 

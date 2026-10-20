@@ -1130,6 +1130,7 @@ static void ProcessEntity(mapentity_t &entity, hull_index_t hullnum)
     // simpler operation for hulls
     if (hullnum.value_or(0)) {
         tree_t tree;
+        tree.clip_hull = true;
         BrushBSP(tree, entity, brushes, tree_split_t::FAST);
         if (map.is_world_entity(entity) && !qbsp_options.nofill.value()) {
             // assume non-world bmodels are simple
