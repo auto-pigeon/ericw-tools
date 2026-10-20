@@ -15,6 +15,7 @@
 #include <testmaps.hh>
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <cstring>
 #include <stdexcept>
@@ -4139,5 +4140,76 @@ TEST(testmapsQ1, hairlineCrackPocketUnchanged)
         }
         EXPECT_NE(nullptr, Q1FaceOnPlaneAtPoint(bsp, {-32, 0, 0}, {0, 0, 1}));
         EXPECT_NE(nullptr, Q1FaceOnPlaneAtPoint(bsp, {32, 0, 0}, {0, 0, 1}));
+    }
+}
+
+TEST(testmapsQ1, clipHullInsideOneBrushIsOneLeaf)
+{
+    // NEW_329: in a collision hull every brush is plain SOLID, so BuildTree_r makes a node that lies wholly inside one
+    // of them a leaf instead of splitting it on, which it did until the hull of a thin-walled pipe was millions of SOLID
+    // leaves PruneNodes folded back into one. A hollow 16-sided tube of 192 thin wall pieces (the Auto-Pigeon PIPES
+    // cell): before, qbsp ran past 300 s and 4.4 GB building its hulls and was killed (the fork at a94299e4,
+    // -forcegoodtree); after, 12 s and 0.27 GB. Read off qbsp's own -loghulls statistics (the tests' -noverbose silences
+    // them; -nostat 0 restores them), not a clock (a loaded host took 590 s with the rule in place): the rule fires in hulls 1 and 2, and hull 1's first tree holds 131,660 leaves
+    // where it held millions (bound 300,000). The collision it builds is the geometry's: the bore is open in hull 0 and
+    // closed in hulls 1 and 2 (narrower than either player box), the walls are solid in every hull, and the room round
+    // the tube is open in every hull.
+    const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_clip_hull_hollow_tube.map", {"-forcegoodtree", "-loghulls", "-nostat", "0"});
+    {
+        std::ifstream log(std::filesystem::path(testmaps_dir) / "q1_clip_hull_hollow_tube.log");
+        ASSERT_TRUE(log.good()) << "qbsp wrote no log beside the map";
+        const auto number = [](const std::string &line) {
+            std::string digits;
+            for (char c : line) {
+                if (std::isdigit(static_cast<unsigned char>(c))) {
+                    digits += c;
+                } else if (c != ',' && !digits.empty()) {
+                    break;
+                }
+            }
+            return digits.empty() ? size_t{0} : static_cast<size_t>(std::stoull(digits));
+        };
+        int hull = -1;
+        std::map<int, size_t> inside_one_brush, first_tree_leaves;
+        for (std::string line; std::getline(log, line);) {
+            if (line.rfind("Processing hull ", 0) == 0) {
+                hull = line[16] - '0';
+            } else if (line.find("collision-hull nodes inside one solid brush") != std::string::npos) {
+                inside_one_brush[hull] += number(line);
+            } else if (line.find("leafs total") != std::string::npos && !first_tree_leaves.count(hull)) {
+                first_tree_leaves[hull] = number(line);
+            }
+        }
+        for (const int h : {1, 2}) {
+            SCOPED_TRACE(fmt::format("hull {}", h));
+            EXPECT_GT(inside_one_brush[h], 0u) << "no node inside one solid brush was made a leaf";
+            testing::Test::RecordProperty(fmt::format("hull{}_first_tree_leaves", h), static_cast<int>(first_tree_leaves[h]));
+        }
+        EXPECT_GT(first_tree_leaves[1], 0u) << "no hull 1 leaf count in the log";
+        EXPECT_LT(first_tree_leaves[1], 300000u) << "hull 1 is split inside solid again";
+    }
+    ASSERT_TRUE(prt.has_value()) << "no portal file: the room leaked";
+
+    const dmodelh2_t *world = &bsp.dmodels[0];
+    const qvec3d axis = qv::normalize(qvec3d{0.83, 0.41, 0.37});
+    const qvec3d across = qv::normalize(qvec3d{-axis[1], axis[0], 0});
+    const auto at = [&](double along, double out) { return axis * along + across * out; };
+    for (const double along : {0.0, 20.0}) {
+        SCOPED_TRACE(fmt::format("bore at {}", along));
+        EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, 0, world, at(along, 0)));
+        EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 1, world, at(along, 0)));
+        EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, 2, world, at(along, 0)));
+    }
+    for (const qvec3d &wall : {at(0, 14.5), at(-24, 14.5)}) {
+        SCOPED_TRACE(fmt::format("wall {}", wall));
+        for (int hull = 0; hull <= 2; ++hull) {
+            EXPECT_EQ(CONTENTS_SOLID, BSP_FindContentsAtPoint(&bsp, hull, world, wall));
+        }
+    }
+    for (const qvec3d &air : {at(0, 100), at(30, 100), at(0, -100)}) {
+        SCOPED_TRACE(fmt::format("room {}", air));
+        for (int hull = 0; hull <= 2; ++hull) {
+            EXPECT_EQ(CONTENTS_EMPTY, BSP_FindContentsAtPoint(&bsp, hull, world, air));
+        }
     }
 }
