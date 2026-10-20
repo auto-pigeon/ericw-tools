@@ -36,9 +36,6 @@
 
 #include "tbb/task_group.h"
 
-// if a brush just barely pokes onto the other side,
-// let it slide by without chopping
-constexpr double PLANESIDE_EPSILON = 0.001;
 // how far outside a brush the middle of a leaf may be and still be that brush's (LeafNode)
 constexpr double LEAF_IN_BRUSH_EPSILON = 0.1;
 // 0.1

@@ -98,8 +98,11 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   SURFACE DEFORM rock (res 16) lost one point in Quake 1 and Quake II, a SCULPT Detail export one in Quake II, drawn 0.027
   and 0.054 off its facet and with another brush's texture, on every release up to 1.4530. When neither leaf has a side
   on the portal, `FindNearerSideOneLeafAway` also asks the brushes one portal away from the solid leaf (the facet's own,
-  behind the sliver), under the same 0.1 bound and facing the open side, and takes a side only when it lies strictly
-  nearer the portal than the one chosen. `testmapsQ1.sliverOwnerDrawn`, `testmapsQ2.sliverOwnerDrawn` and
+  behind the sliver), under the same 0.1 bound and facing the open side, and takes a side only when it lies nearer the
+  portal than the one chosen by more than `PLANESIDE_EPSILON` (0.001): two sides closer together than that are one surface
+  to the BSP, and choosing between them let rounding decide. Release 1.4532 compared them with a bare `<`, and on macOS
+  arm64 (fused multiply-add) that moved the strip of `testmapsQ2.curvedWallPortalSplitLine` off its face; its release run
+  therefore published no macOS arm64 archive, and 1.4532 is not the one to adopt. `testmapsQ1.sliverOwnerDrawn`, `testmapsQ2.sliverOwnerDrawn` and
   `testmapsQ1.sliverOwnerPerturbed` (`testmaps/q1_sliver_owner_heightfield.map` and its Quake II adapter: an authored,
   seeded 16 x 16 heightfield; moved, turned 15 and 45 degrees, and one vertex raised and lowered by 1/1024).
 

@@ -1249,8 +1249,11 @@ of the leaf's own brushes is another brush's, several hundredths away: the face 
 brush's texture, and the facet's own surface not at all.
 
 So the brushes of the leaves one portal from the solid leaf are asked too, under the same 0.1 bound and only for a side
-facing out of it through the portal; one is taken only when its side lies strictly nearer the portal than the side
-FindPortalSide chose (or there was none). Otherwise nothing changes.
+facing out of it through the portal; one is taken only when its side lies nearer the portal than the side FindPortalSide
+chose (or there was none) by more than PLANESIDE_EPSILON. Two sides nearer than that to one another are one surface to
+the BSP, and taking the nearer of them would let rounding pick the face's plane: it did, on a macOS arm64 build (fused
+multiply-add), where it moved the strip of testmapsQ2.curvedWallPortalSplitLine onto another node. Otherwise nothing
+changes.
 ============
 */
 static void FindNearerSideOneLeafAway(portal_t *p, const contentflags_t &viscontents, side_t *bestside[2])
@@ -1288,7 +1291,7 @@ static void FindNearerSideOneLeafAway(portal_t *p, const contentflags_t &viscont
                         continue;
                     }
                     const double dist = p->winding.max_dist_off_plane(side.get_plane());
-                    if (dist <= 0.1 && dist < nearest[!j]) {
+                    if (dist <= 0.1 && dist + PLANESIDE_EPSILON < nearest[!j]) {
                         nearest[!j] = dist;
                         bestside[!j] = &side;
                     }

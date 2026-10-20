@@ -39,6 +39,11 @@ struct tree_t;
 
 constexpr double EDGE_LENGTH_EPSILON = 0.2;
 
+// if a brush just barely pokes onto the other side,
+// let it slide by without chopping (BrushBSP); also the least distance by which FindPortalSide's
+// FindNearerSideOneLeafAway takes another brush's side for being nearer a portal
+constexpr double PLANESIDE_EPSILON = 0.001;
+
 /*
 ================
 WindingIsTiny
