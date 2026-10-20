@@ -4149,12 +4149,16 @@ TEST(testmapsQ1, clipHullInsideOneBrushIsOneLeaf)
     // of them a leaf instead of splitting it on, which it did until the hull of a thin-walled pipe was millions of SOLID
     // leaves PruneNodes folded back into one. A hollow 16-sided tube of 192 thin wall pieces (the Auto-Pigeon PIPES
     // cell): before, qbsp ran past 300 s and 4.4 GB building its hulls and was killed (the fork at a94299e4,
-    // -forcegoodtree); after, 12 s and 0.27 GB. Read off qbsp's own -loghulls statistics (the tests' -noverbose silences
-    // them; -nostat 0 restores them), not a clock (a loaded host took 590 s with the rule in place): the rule fires in hulls 1 and 2, and hull 1's first tree holds 131,660 leaves
+    // -forcegoodtree); after, 12 s and 0.27 GB. Read off qbsp's own -loghulls statistics, not a clock (a loaded host took 590 s with the rule in place): the rule fires in hulls 1 and 2, and hull 1's first tree holds 131,660 leaves
     // where it held millions (bound 300,000). The collision it builds is the geometry's: the bore is open in hull 0 and
     // closed in hulls 1 and 2 (narrower than either player box), the walls are solid in every hull, and the room round
     // the tube is open in every hull.
+    // the log mask is process-wide and settings only ever clear STAT from it (an earlier test's -noverbose did), so it
+    // is put back for this compile, -nostat 0 keeps this compile's -noverbose from clearing it, and it is restored after
+    const auto mask = logging::mask;
+    logging::mask |= logging::flag::STAT;
     const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_clip_hull_hollow_tube.map", {"-forcegoodtree", "-loghulls", "-nostat", "0"});
+    logging::mask = mask;
     {
         std::ifstream log(std::filesystem::path(testmaps_dir) / "q1_clip_hull_hollow_tube.log");
         ASSERT_TRUE(log.good()) << "qbsp wrote no log beside the map";
