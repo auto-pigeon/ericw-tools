@@ -4,7 +4,7 @@ This checkout is `ericw-tools`, alias **ERICW**: the Auto-Pigeon fork of
 [ericwa/ericw-tools](https://github.com/ericwa/ericw-tools). The pinned compiler releases
 (`auto-pigeon-ericw-v1.<N>`) that AUT's compiler oracle and the Companion's fork profiles name are
 built from `main` here. Everything outside `ci/auto-pigeon/`, `.github/workflows/auto-pigeon-release.yml`,
-this file and the Auto-Pigeon sections at the top of `README.md` is upstream's tree.
+this file, `TEST-SKILL.md` and the Auto-Pigeon sections at the top of `README.md` is upstream's tree.
 
 The workspace root (`../AGENTS.md`) and `$MAPPER_ROOT/LLM/WORKFLOW.md` bind here as in every sibling.
 This repository has no prompt queue of its own in practice: a prompt filed in another queue names it
@@ -13,6 +13,9 @@ with `execution_repository: ericw-tools`, and its handoff is written with
 
 ## Rules that bind every task here
 
+- **Read `TEST-SKILL.md` before selecting, resuming or qualifying tests** — the shared Auto-Pigeon
+  testing skill (canonical: AUT `skills/auto-pigeon-testing/SKILL.md`). A documentation-only change
+  here does not build the compilers; a compiler change keeps its native tests and release gates.
 - **A published release is immutable.** Never replace a release's assets, move its tag or rewrite
   history. A correction is a new commit and the release the workflow computes from it; the version is
   `1.<commits in main>` and is read off `ci/auto-pigeon/plan.py`, never guessed.
