@@ -82,6 +82,17 @@ parser_t::parser_t(const char *str, parser_source_location base_location)
 {
 }
 
+// peek_at is the byte `offset` past pos, or NUL when that is at or past end.
+//
+// The buffer is not NUL-terminated: qbsp hands the parser a map file exactly as read, so the byte at
+// `end` belongs to somebody else. Every look at the input below goes through at_end() or this, and the
+// loops that used to stop only on a NUL, a quote or a newline stop at `end` as well (NEW_348; an
+// unterminated final token, quoted string, escape or comment read past the allocation).
+static char peek_at(const char *pos, const char *end, size_t offset)
+{
+    return (pos + offset < end) ? pos[offset] : '\0';
+}
+
 bool parser_t::parse_token(parseflags flags)
 {
     /* for peek, we'll do a backup/restore. */
@@ -117,9 +128,9 @@ skipspace:
     }
 
     /* comment field */
-    if ((pos[0] == '/' && pos[1] == '/') || pos[0] == ';') { // quark writes ; comments in q2 maps
+    if ((pos[0] == '/' && peek_at(pos, end, 1) == '/') || pos[0] == ';') { // quark writes ; comments in q2 maps
         if (flags & PARSE_COMMENT) {
-            while (*pos && *pos != '\n') {
+            while (!at_end() && *pos && *pos != '\n') {
                 *token_p++ = *pos++;
             }
             goto out;
@@ -129,7 +140,7 @@ skipspace:
         if (flags & PARSE_SAMELINE)
             FError("{}: Line is incomplete", location);
         while (*pos++ != '\n') {
-            if (!*pos) {
+            if (at_end() || !*pos) {
                 if (flags & PARSE_SAMELINE)
                     FError("{}: Line is incomplete", location);
                 return false;
@@ -146,15 +157,15 @@ skipspace:
     if (*pos == '"') {
         was_quoted = true;
         pos++;
-        while (*pos != '"') {
-            if (!*pos)
+        while (at_end() || *pos != '"') {
+            if (at_end() || !*pos)
                 FError("{}: EOF inside quoted token", location);
             if (*pos == '\\') {
                 // small note. the vanilla quake engine just parses the "foo" stuff then goes and looks for \n
                 // explicitly within strings. this means ONLY \n works, and double-quotes cannot be used either in maps
                 // _NOR SAVED GAMES_. certain editors can write "wad" "c:\foo\" which is completely fucked. so lets try
                 // to prevent more brokenness and encourage map editors to switch to using sane wad keys.
-                switch (pos[1]) {
+                switch (peek_at(pos, end, 1)) {
                     case 'n':
                     case '\'':
                     case 'r':
@@ -177,14 +188,19 @@ skipspace:
                     case '9': // too lazy to validate these. doesn't break stuff.
                         break;
                     case '\"':
-                        if (pos[2] == '\r' || pos[2] == '\n') {
+                        if (peek_at(pos, end, 2) == '\r' || peek_at(pos, end, 2) == '\n') {
                             logging::print("WARNING: {}: escaped double-quote at end of string\n", location);
                         } else {
                             *token_p++ = *pos++;
                         }
                         break;
+                    case '\0':
+                        // the backslash is the last byte: nothing to escape, and the loop refuses the open
+                        // string on its next turn
+                        break;
                     default:
-                        logging::print("WARNING: {}: Unrecognised string escape - \\{}\n", location, pos[1]);
+                        logging::print(
+                            "WARNING: {}: Unrecognised string escape - \\{}\n", location, peek_at(pos, end, 1));
                         break;
                 }
             }
@@ -192,7 +208,7 @@ skipspace:
         }
         pos++;
     } else {
-        while (*pos > 32) {
+        while (!at_end() && *pos > 32) {
             *token_p++ = *pos++;
         }
     }

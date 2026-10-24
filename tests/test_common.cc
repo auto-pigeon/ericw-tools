@@ -891,3 +891,61 @@ TEST(entdict, writeThenParseIsTheSameSequence)
     parser_t p{lump, {}};
     EXPECT_EQ(EntData_Parse(p), ents);
 }
+
+// The tokenizer stops at the END of its buffer, not at a NUL it hopes is there.
+//
+// qbsp hands parser_t the map file exactly as read — a vector the size of the file, no terminator — so
+// every byte after `end` belongs to somebody else. These views are cut out of a larger string whose next
+// bytes are deliberately NOT a terminator (a quote, a space, a word, a newline): a scan past `end` shows
+// up as a token that grew, a string that closed on a foreign quote, or a comment that swallowed foreign
+// bytes, and under ASan as a heap-buffer-overflow. NEW_348, lead
+// `ericw-tools/common/parser.cc:parser_t::parse_token:scan-without-end-bound`.
+static std::vector<std::string> tokens_within(std::string_view text, parseflags flags = PARSE_NORMAL)
+{
+    const std::string backing = std::string(text) + "\" foreign\n";
+    parser_t p{std::string_view(backing.data(), text.size()), {}};
+    std::vector<std::string> out;
+    while (p.parse_token(flags)) {
+        out.push_back(p.token);
+    }
+    EXPECT_TRUE(p.at_end());
+    return out;
+}
+
+TEST(parser, aFinalUnquotedTokenEndsAtTheEndOfTheBuffer)
+{
+    // an ordinary map saved without a trailing newline
+    EXPECT_EQ(tokens_within("{\n\"classname\" \"worldspawn\"\n}"),
+        (std::vector<std::string>{"{", "classname", "worldspawn", "}"}));
+    EXPECT_EQ(tokens_within("abc"), (std::vector<std::string>{"abc"}));
+}
+
+TEST(parser, aQuotedStringOpenAtTheEndIsRefused)
+{
+    EXPECT_THROW(tokens_within("{\n\"classname\" \"worldsp"), ericwtools_error);
+    // a backslash as the last byte: its escape look-ahead must not read past the end either
+    EXPECT_THROW(tokens_within("{\n\"classname\" \"a\\"), ericwtools_error);
+    EXPECT_THROW(tokens_within("\"a\\\""), ericwtools_error);
+}
+
+TEST(parser, aCommentRunningToTheEndStopsThere)
+{
+    EXPECT_EQ(tokens_within("{\n}\n// trailing comment"), (std::vector<std::string>{"{", "}"}));
+    EXPECT_EQ(tokens_within("{\n}\n; quark comment"), (std::vector<std::string>{"{", "}"}));
+    // a lone '/' as the last byte is a token, not the start of a comment read from beyond the end
+    EXPECT_EQ(tokens_within("{ /"), (std::vector<std::string>{"{", "/"}));
+
+    const std::string backing = std::string("// note") + "\" foreign\n";
+    parser_t p{std::string_view(backing.data(), 7), {}};
+    ASSERT_TRUE(p.parse_token(PARSE_COMMENT));
+    EXPECT_EQ(p.token, "// note");
+}
+
+TEST(parser, terminatedInputParsesAsBefore)
+{
+    EXPECT_EQ(tokens_within("{\n\"classname\" \"worldspawn\"\n\"wad\" \"a\\\\b.wad\"\n}\n"),
+        (std::vector<std::string>{"{", "classname", "worldspawn", "wad", "a\\\\b.wad", "}"}));
+    EXPECT_EQ(tokens_within("// lead\n( 0 0 0 ) ( 1 0 0 ) ( 0 1 0 ) tex 0 0 0 1 1\n"),
+        (std::vector<std::string>{"(", "0", "0", "0", ")", "(", "1", "0", "0", ")", "(", "0", "1", "0", ")", "tex",
+            "0", "0", "0", "1", "1"}));
+}
