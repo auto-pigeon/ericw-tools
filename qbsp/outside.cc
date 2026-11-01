@@ -124,6 +124,10 @@ static bool OutsideFill_Passable(const portal_t *p)
         return false;
     }
 
+    if (p->past_fold) {
+        return false; // joins leaves that do not touch
+    }
+
     return !LeafSealsMap(p->nodes[0]) && !LeafSealsMap(p->nodes[1]);
 }
 
@@ -132,6 +136,10 @@ static bool DetailFill_Passable(const portal_t *p)
     if (!p->onnode) {
         // portal to outside_node
         return false;
+    }
+
+    if (p->past_fold) {
+        return false; // joins leaves that do not touch
     }
 
     return !LeafSealsForDetailFill(p->nodes[0]) && !LeafSealsForDetailFill(p->nodes[1]);

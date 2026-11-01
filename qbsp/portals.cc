@@ -446,9 +446,11 @@ portal is split off on the other side, the piece joins two leaves that do not to
 through solid: a sealed corridor of BEND pieces read as a hull 1 leak that way, through walls no edit had touched
 (NEW_377, 1.4535: both ends of the jump were air, the 271 units between them solid in all three hulls).
 
-So such a fold is remembered. The winding is still folded whole and every face is what it was, but a piece of it split off
-later that lies wholly past the split it was folded across is no longer a portal for the floods: it touches neither
-child's volume on that side, so it stays draw-only. Only TREE portals are remembered, because only they are flooded.
+So such a fold is remembered. The winding is still folded whole, and a piece of it split off later that lies wholly past the
+split it was folded across stays an ordinary portal for everything else, so every face, VIS and the portal file are what they
+were; it is marked past_fold and only the fills refuse it (OutsideFill_Passable, DetailFill_Passable). A piece kept draw-only
+instead also leaves MakeNodePortal's clipping, and that moved one sliver past testmapsQ1/Q2.sculptTinyNodePortalDrawn's bound
+on Windows and macOS arm64. Only TREE portals are remembered, because only they are flooded.
 ==============
 */
 static bool FoldReachesPastSplit(const winding_t &piece, const qplane3d &split)
@@ -629,9 +631,10 @@ static twosided<std::list<buildportal_t>> SplitNodePortals(
         }
 
         new_portal.folds = p.folds;
+        new_portal.past_fold = p.past_fold;
         for (buildportal_t *piece : {&p, &new_portal}) {
-            if (!piece->folds.empty() && PieceIsPastAFold(piece->winding, piece->folds)) {
-                piece->draw_only = true;
+            if (!piece->past_fold && !piece->folds.empty() && PieceIsPastAFold(piece->winding, piece->folds)) {
+                piece->past_fold = true;
                 stats.c_foldedpastleaf++;
             }
         }
@@ -667,6 +670,7 @@ void MakePortalsFromBuildportals(tree_t &tree, std::list<buildportal_t> &buildpo
         new_portal->plane = buildportal.plane;
         new_portal->onnode = buildportal.onnode;
         new_portal->winding = std::move(buildportal.winding);
+        new_portal->past_fold = buildportal.past_fold;
         AddPortalToNodes(new_portal, buildportal.nodes[0], buildportal.nodes[1]);
     }
 }

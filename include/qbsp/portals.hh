@@ -51,6 +51,10 @@ struct portal_t
 
     // in tree.draw_only_portals only: an opening for the fills (KeepThinLeavesOpen), never drawn
     bool fill_only = false;
+
+    // a piece of a folded winding lying wholly past the split it was folded across: it joins leaves that do not touch, so
+    // the fills refuse it (see FoldReachesPastSplit)
+    bool past_fold = false;
 };
 
 // helper used for building the portals in paralllel.
@@ -70,6 +74,8 @@ struct buildportal_t
     // the planes this winding was folded across although a tiny piece reached past them, each with the child that kept
     // the winding in front: a piece wholly behind one touches no leaf of that child (see FoldReachesPastSplit)
     std::vector<qplane3d> folds;
+    // lies wholly behind one of `folds`
+    bool past_fold = false;
 };
 
 struct portalstats_t : logging::stat_tracker_t
