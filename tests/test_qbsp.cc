@@ -4290,22 +4290,21 @@ TEST(testmapsQ1, foldedNeedleDoesNotJoinLeaves)
     // so a needle 271 units long and 0.12 wide at its base is "tiny". That child then held a portal reaching 271 units
     // past its own volume, and a piece of it split off later joined a leaf of the corridor to a leaf behind its wall. The
     // map is sealed in hull 0, and through releases 1.4535 and 1.4536 hull 1's outside fill walked across that portal.
+    // -forcegoodtree only: the map was reduced under it, the mode every Companion build uses. The reduction kept what that
+    // tree needs and nothing else, so the same 310 brushes leak in hull 0 under the default tree, fixed or not (the map they
+    // came from is sealed in all three hulls under both).
     const auto map_path = std::filesystem::path(testmaps_dir) / "q1_folded_needle_corridor.map";
-    for (const std::vector<std::string> &extra_args : {std::vector<std::string>{"-leaktest"},
-             std::vector<std::string>{"-leaktest", "-forcegoodtree"}}) {
-        SCOPED_TRACE(extra_args.back());
-        auto prt_path = map_path;
-        prt_path.replace_extension(".prt");
-        std::filesystem::remove(prt_path);
-        const mbsp_t bsp = CompileTestmapQ1WithoutCheckBsp("q1_folded_needle_corridor.map", extra_args);
-        EXPECT_TRUE(std::filesystem::exists(prt_path)) << "no portal file: the map leaked";
-        for (int hull : {0, 1, 2}) {
-            SCOPED_TRACE(fmt::format("hull {}", hull));
-            // the corridor, and the player's own point
-            EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, hull, {-300, 2400, 92}));
-            // the wall the route crossed, 8.6 units inside a BEND piece
-            EXPECT_EQ(CONTENTS_SOLID, Sub002Contents(bsp, hull, {-271.623609426, 2589.590605463, 72.589816194}));
-        }
+    auto prt_path = map_path;
+    prt_path.replace_extension(".prt");
+    std::filesystem::remove(prt_path);
+    const mbsp_t bsp = CompileTestmapQ1WithoutCheckBsp("q1_folded_needle_corridor.map", {"-leaktest", "-forcegoodtree"});
+    EXPECT_TRUE(std::filesystem::exists(prt_path)) << "no portal file: the map leaked";
+    for (int hull : {0, 1, 2}) {
+        SCOPED_TRACE(fmt::format("hull {}", hull));
+        // the corridor, and the player's own point
+        EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, hull, {-300, 2400, 92}));
+        // the wall the route crossed, 8.6 units inside a BEND piece
+        EXPECT_EQ(CONTENTS_SOLID, Sub002Contents(bsp, hull, {-271.623609426, 2589.590605463, 72.589816194}));
     }
 
     // the other direction: the same map with the west plug taken out has a real opening, and hull 0 must still report it.
