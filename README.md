@@ -225,6 +225,20 @@ Without `-leaktest`, `qbsp` exits 0 on a leaking map; the leak is the `.pts` fil
 Every program prints `ericw-tools <upstream version>+auto-pigeon.1.<N>` in its first lines. A SHA-256 shows
 the download is intact; these builds are not signed.
 
+- A tiny piece folded into the other child of a portal split no longer joins leaves that do not touch. `SplitNodePortals`
+  folds a piece `WindingIsTiny` calls tiny: the whole portal, uncut, goes to the child with the substantial piece, which
+  then covers the piece for the faces. `WindingIsTiny` counts edges, so a needle 271 units long and 0.12 wide at its base
+  has two long edges and counts as tiny, and the child holds a portal reaching 271 units past its own volume. When the far
+  end of that portal is split off on the other side, the piece joins two leaves with solid between them, and the outside
+  fill walks across it: a sealed corridor of BEND pieces read as a hull 1 leak through walls no edit had touched
+  (`beta1.coarse4` at 1.4535 and 1.4536, a route of 1,488 points; hull 0 was sealed, and an edit elsewhere had only changed the split
+  tree). The fold stays exactly as it was, so every face is what it was, but `buildportal_t::folds` remembers the plane such
+  a piece was folded across, and a piece later split off wholly past that plane is draw-only: never linked, so no flood
+  crosses it. Only `TREE` portals are remembered, so VIS and the portal file read what they read. Measured on that map at
+  its last sealed revision: the same `.prt` bytes, nodes and leaves, one face fewer of 11,885 (area -0.0025 of 3,745,901),
+  67 clipnodes more of 23,338. `testmapsQ1.foldedNeedleDoesNotJoinLeaves` (`testmaps/q1_folded_needle_corridor.map`, 310 brushes
+  reduced from that map; with its west plug removed the same map must still leak).
+
 ### Use in the Auto-Pigeon Companion
 
 The Companion runs compilers you installed; it does not download or bundle these. Keep each release in

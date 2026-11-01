@@ -67,6 +67,9 @@ struct buildportal_t
     // a draw_only winding that is not drawn either: a tiny piece SplitNodePortals folded into the other child, kept
     // only as an opening for the fills (see KeepThinLeavesOpen in outside.cc)
     bool fill_only = false;
+    // the planes this winding was folded across although a tiny piece reached past them, each with the child that kept
+    // the winding in front: a piece wholly behind one touches no leaf of that child (see FoldReachesPastSplit)
+    std::vector<qplane3d> folds;
 };
 
 struct portalstats_t : logging::stat_tracker_t
@@ -74,6 +77,8 @@ struct portalstats_t : logging::stat_tracker_t
     stat &c_tinyportals = register_stat("tiny portals");
     stat &c_drawonlyportals = register_stat("tiny portals kept only to draw their faces");
     stat &c_fillonlyportals = register_stat("folded tiny portals kept as openings for the fills");
+    stat &c_longfolds = register_stat("tiny portal pieces folded although they reach past the split");
+    stat &c_foldedpastleaf = register_stat("portal pieces past a fold, closed to the floods");
 };
 
 contentflags_t ClusterContents(const node_t *node);

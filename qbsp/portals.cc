@@ -433,6 +433,53 @@ static std::optional<buildportal_t> MakeNodePortal(
 
 /*
 ==============
+FoldReachesPastSplit, PieceIsPastAFold
+
+SplitNodePortals folds a tiny piece of a portal into the other child: the whole portal, uncut, goes to the child that has
+the substantial piece, because a drawn face IS a portal winding and that portal then covers the piece for the faces. That
+is sound for the floods too while the piece stays within EDGE_LENGTH_EPSILON of the split plane: the winding reaches no
+further past the child than the vertex snapping would have moved it.
+
+WindingIsTiny does not say that, though. It counts edges, so a needle 271 units long and 0.12 wide at its base has two long
+edges and is "tiny". The child then holds a portal reaching 271 units past its own volume, and when the far end of that
+portal is split off on the other side, the piece joins two leaves that do not touch. The outside fill walks across it,
+through solid: a sealed corridor of BEND pieces read as a hull 1 leak that way, through walls no edit had touched
+(NEW_377, 1.4535: both ends of the jump were air, the 271 units between them solid in all three hulls).
+
+So such a fold is remembered. The winding is still folded whole and every face is what it was, but a piece of it split off
+later that lies wholly past the split it was folded across is no longer a portal for the floods: it touches neither
+child's volume on that side, so it stays draw-only. Only TREE portals are remembered, because only they are flooded.
+==============
+*/
+static bool FoldReachesPastSplit(const winding_t &piece, const qplane3d &split)
+{
+    for (auto &point : piece) {
+        if (fabs(split.distance_to(point)) > EDGE_LENGTH_EPSILON) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool PieceIsPastAFold(const winding_t &piece, const std::vector<qplane3d> &folds)
+{
+    for (auto &kept_side : folds) {
+        bool past = true;
+        for (auto &point : piece) {
+            if (kept_side.distance_to(point) > SPLIT_WINDING_EPSILON) {
+                past = false;
+                break;
+            }
+        }
+        if (past) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+==============
 SplitNodePortals
 
 Move or split the portals that bound node so that the node's
@@ -536,7 +583,11 @@ static twosided<std::list<buildportal_t>> SplitNodePortals(
         }
 
         if (!frontwinding) {
-            keep_fill_only(tinyfront, f, result.front);
+            if (type == portaltype_t::TREE && tinyfront && FoldReachesPastSplit(*tinyfront, plane.get_plane())) {
+                p.folds.push_back(-plane.get_plane()); // the back child keeps the portal
+                stats.c_longfolds++;
+            }
+            keep_fill_only(tinyfront, f, result.front); // takes the piece
             if (side == SIDE_FRONT)
                 p.nodes = {b, other_node};
             else
@@ -546,7 +597,11 @@ static twosided<std::list<buildportal_t>> SplitNodePortals(
             continue;
         }
         if (!backwinding) {
-            keep_fill_only(tinyback, b, result.back);
+            if (type == portaltype_t::TREE && tinyback && FoldReachesPastSplit(*tinyback, plane.get_plane())) {
+                p.folds.push_back(plane.get_plane()); // the front child keeps the portal
+                stats.c_longfolds++;
+            }
+            keep_fill_only(tinyback, b, result.back); // takes the piece
             if (side == SIDE_FRONT)
                 p.nodes = {f, other_node};
             else
@@ -571,6 +626,14 @@ static twosided<std::list<buildportal_t>> SplitNodePortals(
         } else {
             p.nodes = {other_node, f};
             new_portal.nodes = {other_node, b};
+        }
+
+        new_portal.folds = p.folds;
+        for (buildportal_t *piece : {&p, &new_portal}) {
+            if (!piece->folds.empty() && PieceIsPastAFold(piece->winding, piece->folds)) {
+                piece->draw_only = true;
+                stats.c_foldedpastleaf++;
+            }
         }
 
         result.front.push_back(std::move(p));
