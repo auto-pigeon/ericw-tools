@@ -4284,6 +4284,48 @@ TEST(testmapsQ1, pipeThinWedgeDrawn)
     }
 }
 
+TEST(testmapsQ1, foldedNeedleDoesNotJoinLeaves)
+{
+    // NEW_377. SplitNodePortals folds a tiny piece of a portal into the other child, uncut, and WindingIsTiny counts edges,
+    // so a needle 271 units long and 0.12 wide at its base is "tiny". That child then held a portal reaching 271 units
+    // past its own volume, and a piece of it split off later joined a leaf of the corridor to a leaf behind its wall. The
+    // map is sealed in hull 0, and through releases 1.4535 and 1.4536 hull 1's outside fill walked across that portal.
+    const auto map_path = std::filesystem::path(testmaps_dir) / "q1_folded_needle_corridor.map";
+    for (const std::vector<std::string> &extra_args : {std::vector<std::string>{"-leaktest"},
+             std::vector<std::string>{"-leaktest", "-forcegoodtree"}}) {
+        SCOPED_TRACE(extra_args.back());
+        auto prt_path = map_path;
+        prt_path.replace_extension(".prt");
+        std::filesystem::remove(prt_path);
+        const mbsp_t bsp = CompileTestmapQ1WithoutCheckBsp("q1_folded_needle_corridor.map", extra_args);
+        EXPECT_TRUE(std::filesystem::exists(prt_path)) << "no portal file: the map leaked";
+        for (int hull : {0, 1, 2}) {
+            SCOPED_TRACE(fmt::format("hull {}", hull));
+            // the corridor, and the player's own point
+            EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, hull, {-300, 2400, 92}));
+            // the wall the route crossed, 8.6 units inside a BEND piece
+            EXPECT_EQ(CONTENTS_SOLID, Sub002Contents(bsp, hull, {-271.623609426, 2589.590605463, 72.589816194}));
+        }
+    }
+
+    // the other direction: the same map with the west plug taken out has a real opening, and hull 0 must still report it.
+    const auto open_paths = Sub002Paths("folded_needle_open");
+    {
+        std::ifstream in(map_path);
+        std::string map_text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const size_t plug = map_text.find("// the west plug");
+        ASSERT_NE(std::string::npos, plug);
+        const size_t end = map_text.find("}", plug);
+        ASSERT_NE(std::string::npos, end);
+        map_text.erase(plug, end + 1 - plug);
+        std::ofstream(open_paths.map) << map_text;
+    }
+    auto compile = [&]() { LoadTestmap(open_paths.map, open_paths.bsp, {"-leaktest", "-forcegoodtree"}); };
+    EXPECT_THAT(compile, testing::ThrowsMessage<std::exception>(testing::HasSubstr("Aborting because -leaktest was used.")));
+    EXPECT_FALSE(std::filesystem::exists(open_paths.prt));
+    EXPECT_TRUE(std::filesystem::exists(open_paths.pts));
+}
+
 TEST(testmapsQ1, clipHullInsideOneBrushIsOneLeaf)
 {
     // NEW_329: in a collision hull every brush is plain SOLID, so BuildTree_r makes a node that lies wholly inside one
