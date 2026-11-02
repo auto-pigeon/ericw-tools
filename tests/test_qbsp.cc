@@ -4343,14 +4343,16 @@ TEST(testmapsQ1, brushPastWorldExtent)
 {
     // NEW_377. A side whose winding reaches past the world extent is dropped with a warning. CreateBrushWindings reset the
     // winding inside the loop walking it and then moved from the empty optional, so the side kept freed points and qbsp
-    // crashed later, in SplitBrush's allocator: every run on this map through release 1.4543, and on a re-bent corridor the
-    // kernel wrote with a far vertex. The room must still compile sealed, with its air open.
+    // crashed later, in SplitBrush's allocator: every run on this corridor through release 1.4543. It must compile sealed,
+    // with the player's point open in every hull. Windings use TBB's allocator, so AddressSanitizer cannot see this.
     auto prt_path = std::filesystem::path(testmaps_dir) / "q1_brush_past_world_extent.prt";
     std::filesystem::remove(prt_path);
-    const mbsp_t bsp = CompileTestmapQ1WithoutCheckBsp("q1_brush_past_world_extent.map", {"-leaktest", "-worldextent", "400"});
+    const mbsp_t bsp = CompileTestmapQ1WithoutCheckBsp("q1_brush_past_world_extent.map", {"-leaktest", "-forcegoodtree"});
     EXPECT_TRUE(std::filesystem::exists(prt_path)) << "no portal file: the map leaked";
+    ASSERT_FALSE(bsp.dclipnodes.empty());
     for (int hull : {0, 1, 2}) {
-        EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, hull, {0, 0, 0}));
+        SCOPED_TRACE(fmt::format("hull {}", hull));
+        EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, hull, {-207, -72, 86}));
     }
 }
 
