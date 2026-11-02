@@ -20,7 +20,7 @@ import pathlib
 import sys
 import tempfile
 
-from common import ACCEPTANCE_STEPS, HERE, PLATFORMS, REQUIRED_PLATFORMS, Failure, load_json, log, run, sha256_file, write_json
+from common import ACCEPTANCE_STEPS, SMOKE_ACCEPTANCE_STEPS, validated_tests, HERE, PLATFORMS, REQUIRED_PLATFORMS, Failure, load_json, log, run, sha256_file, write_json
 
 LABELS = {"linux-amd64": "Linux x86-64", "windows-amd64": "Windows x86-64", "macos-amd64": "macOS Intel (x86-64)",
           "macos-arm64": "macOS Apple silicon (arm64)"}
@@ -56,12 +56,18 @@ def evaluate(platform, plan, artifacts):
             raise Failure("%s: %s is %r, expected %r" % (platform, label, got, want))
     if not package.get("releasable"):
         raise Failure("%s: the archive is marked not releasable" % platform)
-    if not all(step["status"] == "pass" for step in report["steps"]) or len(report["steps"]) != ACCEPTANCE_STEPS:
+    mode = report.get("acceptance_mode", "full")
+    if mode not in ("full", "smoke"):
+        raise Failure("unknown archive acceptance mode: %r" % mode)
+    expected_steps = SMOKE_ACCEPTANCE_STEPS if mode == "smoke" else ACCEPTANCE_STEPS
+    if len({step["name"] for step in report["steps"]}) != expected_steps:
+        raise Failure("archive acceptance has missing or repeated steps")
+    if not all(step["status"] == "pass" for step in report["steps"]) or len(report["steps"]) != expected_steps:
         raise Failure("%s: the acceptance report says pass but has %d passed steps of the %d the acceptance runs"
-                      % (platform, sum(step["status"] == "pass" for step in report["steps"]), ACCEPTANCE_STEPS))
-    full = package["tests"]["full"]
+                      % (platform, sum(step["status"] == "pass" for step in report["steps"]), expected_steps))
+    full = validated_tests(package)
     return {"platform": platform, "name": asset, "path": str(zip_path), "size": zip_path.stat().st_size, "sha256": digest,
-            "kind": "toolchain", "acceptance": {"verdict": "pass", "steps_passed": len(report["steps"]),
+            "kind": "toolchain", "test_mode": package.get("test_mode", "full"), "acceptance": {"verdict": "pass", "mode": mode, "steps_passed": len(report["steps"]),
                                                 "commands_run": len(report["commands"])},
             "tests": {"run": full["tests_run"], "failures": full["failures"], "skipped_by_the_suite": full["skipped"],
                       "focused": package["tests"]["focused"]["names_run"]}}, None
@@ -116,8 +122,8 @@ def notes(plan, accepted, missing, source, run_url):
         "| --- | --- | --- | --- |",
     ]
     for a in accepted:
-        lines.append("| %s | `%s` | %d run, %d failed | yes: %d steps on a native runner |" % (
-            LABELS[a["platform"]], a["name"], a["tests"]["run"], a["tests"]["failures"], a["acceptance"]["steps_passed"]))
+        lines.append("| %s | `%s` | %s: %d run, %d failed | %s: %d steps on a native runner |" % (
+            LABELS[a["platform"]], a["name"], a["test_mode"], a["tests"]["run"], a["tests"]["failures"], a["acceptance"]["mode"], a["acceptance"]["steps_passed"]))
     known = load_json(HERE / "candidates.json")
     for platform, reason in missing:
         lines.append("| %s | **not published** | | %s |" % (LABELS[platform], reason))
@@ -143,7 +149,7 @@ def notes(plan, accepted, missing, source, run_url):
         "A SHA-256 is an integrity check, not a signature. `release-manifest.json` records every asset, its digest and its "
         "acceptance verdict.",
         "",
-        "Built, tested and accepted by %s." % run_url,
+        "CI builds and smoke checks: %s. Full suites, sanitizer runs and broad geometry acceptance are agent-local qualification, not repeated by CI." % run_url,
     ]
     return "\n".join(lines) + "\n"
 
@@ -275,3 +281,4 @@ if __name__ == "__main__":
         main()
     except Failure as e:
         sys.exit("publish: " + str(e))
+

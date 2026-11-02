@@ -11,6 +11,14 @@ This repository has no prompt queue of its own in practice: a prompt filed in an
 with `execution_repository: ericw-tools`, and its handoff is written with
 `python3 ../auto-pigeon-tools/scripts/agent_task.py checkpoint --repo-root "$PWD" --queue <queue> --prompt <prompt>.md`.
 
+## Local qualification and light CI (operator decision, 2026-11-02)
+
+Read `ci/auto-pigeon/TESTING.md` with `TEST-SKILL.md`. For this fork it specifies where
+qualification runs: broad suites, sanitizers, geometry sweeps and source-archive rebuilds are
+agent-local wrap-up work; automatic CI performs native builds and bounded smoke checks.
+This explicit operator decision supersedes older requirements to repeat broad tests in CI.
+Keep results honest: a CI smoke pass does not establish full-suite or sanitizer coverage.
+
 ## Rules that bind every task here
 
 - **Read `TEST-SKILL.md` before selecting, resuming or qualifying tests** — the shared Auto-Pigeon
@@ -84,3 +92,4 @@ re-read whole files.
 After big code changes, refresh the graph with `trail build` (deterministic,
 no API key, $0).
 <!-- trail:end -->
+

@@ -4,9 +4,10 @@
     python3 ci/auto-pigeon/build.py --platform linux-amd64 --deps <deps dir> --build-dir <dir> \
         --plan plan.json --report build-report.json [--asan] [--jobs 4]
 
-The test step runs the real GoogleTest executable (CMake registers nothing with CTest, so a
+Full mode (the local default) runs the real GoogleTest executable (CMake registers nothing with CTest, so a
 green `ctest` would prove nothing), fails on zero executed tests, and then runs the thin-brush
-regression by name and requires that exactly that test ran and passed.
+regression by name and requires that exactly that test ran and passed. Explicit --test-mode smoke
+runs only that named regression with a 60-second deadline; it never claims full-suite coverage.
 """
 
 import argparse
@@ -16,9 +17,7 @@ import platform as pyplatform
 import re
 import sys
 
-from common import PLATFORMS, PROGRAMS, REPO, Failure, exe, load_json, log, require_native, run, sha256_file, write_json
-
-FOCUSED_TEST = "testmapsQ1.cliphull2ThinFragmentSplit"
+from common import PLATFORMS, PROGRAMS, REPO, Failure, exe, load_json, log, require_native, run, sha256_file, write_json, FOCUSED_TEST
 
 
 def cmake_cache(build_dir):
@@ -49,11 +48,11 @@ def resolve_binary(build_dir, subdir, name, platform):
     raise Failure("built program not found: %s/%s" % (subdir, exe(platform, name)))
 
 
-def run_gtest(tests, build_dir, label, extra, env):
+def run_gtest(tests, build_dir, label, extra, env, timeout=None):
     report = build_dir / ("gtest-%s.json" % label)
     if report.exists():
         report.unlink()
-    code, _, seconds = run([tests, "--gtest_output=json:%s" % report, *extra], cwd=build_dir, env=env, check=False)
+    code, _, seconds = run([tests, "--gtest_output=json:%s" % report, *extra], cwd=build_dir, env=env, check=False, timeout=timeout)
     if not report.is_file():
         raise Failure("%s: the test program wrote no report (exit %d)" % (label, code))
     data = load_json(report)
@@ -89,7 +88,13 @@ def main():
     ap.add_argument("--asan", action="store_true", help="RelWithDebInfo + AddressSanitizer; test coverage only, never packaged")
     ap.add_argument("--jobs", type=int, default=4, help="CMake build parallelism (not a compiler-tool flag)")
     ap.add_argument("--skip-full-suite", action="store_true", help="local iteration only; the report says so and package.py refuses it")
+    ap.add_argument("--test-mode", choices=("full", "smoke"), default="full",
+                    help="full local qualification (default), or the bounded CI smoke regression")
     args = ap.parse_args()
+    if args.asan and args.test_mode != "full":
+        ap.error("AddressSanitizer qualification is local and requires the full test mode")
+    if args.skip_full_suite and args.test_mode != "full":
+        ap.error("--skip-full-suite is local iteration, not CI smoke qualification")
     platform = args.platform
     require_native(platform)
     plan = load_json(args.plan)
@@ -167,10 +172,10 @@ def main():
         # inherited from the upstream script: the tools are not yet free of leaks at exit
         env["ASAN_OPTIONS"] = "detect_leaks=false"
     suites = {}
-    if not args.skip_full_suite:
+    if args.test_mode == "full" and not args.skip_full_suite:
         suites["full"] = run_gtest(tests, build_dir, "full", [], env)
-    focused = run_gtest(tests, build_dir, "focused", ["--gtest_filter=" + FOCUSED_TEST], env)
-    if focused["tests_run"] != 1 or focused["names_run"] != [FOCUSED_TEST]:
+    focused = run_gtest(tests, build_dir, "focused", ["--gtest_filter=" + FOCUSED_TEST], env, timeout=60 if args.test_mode == "smoke" else None)
+    if focused["tests_run"] != 1 or focused["names_run"] != [FOCUSED_TEST] or focused["skipped"]:
         raise Failure("the focused run did not execute exactly %s: %r" % (FOCUSED_TEST, focused["names_run"]))
     suites["focused"] = focused
 
@@ -186,7 +191,8 @@ def main():
         "asan": args.asan,
         "from_source_archive": from_source_archive,
         "build_type": build_type,
-        "full_suite_skipped": args.skip_full_suite,
+        "test_mode": "iteration" if args.skip_full_suite else args.test_mode,
+        "full_suite_skipped": args.skip_full_suite or args.test_mode == "smoke",
         "cmake_options": options,
         "cmake_generator": cache.get("CMAKE_GENERATOR", ""),
         "cmake_version": cmake_version,
@@ -215,3 +221,4 @@ if __name__ == "__main__":
         main()
     except Failure as e:
         sys.exit("build: " + str(e))
+

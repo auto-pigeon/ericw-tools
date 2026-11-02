@@ -19,7 +19,7 @@ import sys
 import zipfile
 
 import closure
-from common import HERE, PLATFORMS, PROGRAMS, REPO, Failure, exe, load_json, log, require_native, run, sha256_file, write_json
+from common import validated_tests, HERE, PLATFORMS, PROGRAMS, REPO, Failure, exe, load_json, log, require_native, run, sha256_file, write_json
 
 STATIC_LICENSES = {
     "COPYING": "COPYING",
@@ -190,7 +190,7 @@ def main():
     ap.add_argument("--plan", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--allow-local", action="store_true",
-                    help="accept a modified tree or a skipped full suite; the result is marked not releasable")
+                    help="accept a modified tree or local iteration; the result is marked not releasable")
     args = ap.parse_args()
     platform = args.platform
     require_native(platform)
@@ -205,9 +205,15 @@ def main():
         raise Failure("report/dependencies are not for %s" % platform)
     if report["asan"]:
         raise Failure("an AddressSanitizer build is never packaged")
-    releasable = not (report["tracked_files_modified"] or report["full_suite_skipped"])
+    iteration = report["full_suite_skipped"] and report.get("test_mode", "full") != "smoke"
+    if iteration and args.allow_local:
+        # Local iteration still has to execute the named regression. It never qualifies a release.
+        validated_tests(dict(report, test_mode="smoke"))
+    else:
+        validated_tests(report)
+    releasable = not (report["tracked_files_modified"] or iteration)
     if not releasable and not args.allow_local:
-        raise Failure("the build is from a modified tree or skipped the full test suite; not packaging it")
+        raise Failure("the build is from a modified tree or unqualified local iteration; not packaging it")
 
     build_dir = pathlib.Path(report["build_dir"])
     out = pathlib.Path(args.out).resolve()
@@ -305,6 +311,8 @@ def main():
                                                   "cxx_flags", "cxx_flags_release", "osx_deployment_target", "host", "build_parallel_jobs")},
         "cpu_baseline": cpu,
         "tests": report["tests"],
+        "test_mode": report.get("test_mode", "full"),
+        "full_suite_skipped": report["full_suite_skipped"],
         "dependencies": {
             "embree": {k: v for k, v in deps["embree"].items() if k not in ("cmake_dir", "runtime_dirs", "license_files")},
             "onetbb": {k: v for k, v in deps["onetbb"].items() if k not in ("cmake_dir", "runtime_dirs", "license_files")},
@@ -347,7 +355,9 @@ def main():
         "schema": "auto-pigeon-ericw-package/1", "asset": zip_path.name, "size": zip_path.stat().st_size,
         "sha256": sha256_file(zip_path), "platform": platform, "commit": plan["commit"], "version": plan["version"],
         "stamp": plan["stamp"], "releasable": releasable, "manifest_sha256": sha256_file(root / "MANIFEST.json"),
-        "tests": report["tests"], "members": len(files) + 1,
+        "tests": report["tests"],
+        "test_mode": report.get("test_mode", "full"),
+        "full_suite_skipped": report["full_suite_skipped"], "members": len(files) + 1,
     }
     write_json(out / (stem + ".package.json"), package)
     shutil.copyfile(args.build_report, out / (stem + ".build-report.json"))
@@ -360,3 +370,4 @@ if __name__ == "__main__":
         main()
     except Failure as e:
         sys.exit("package: " + str(e))
+

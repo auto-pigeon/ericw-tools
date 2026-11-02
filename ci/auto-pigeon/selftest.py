@@ -75,8 +75,17 @@ def main():
     check(re.search(r"^\s*pull_request_target", workflow, re.M) is None, "pull_request_target must never be used")
     check(len(re.findall(r"^\s+contents: write\s*$", workflow, re.M)) == 1, "exactly one job may write repository contents")
     check(len(list((HERE.parent.parent / ".github" / "workflows").glob("*.y*ml"))) == 1, "there must be one workflow: one release path")
+    check("  asan:" not in workflow and "--asan" not in workflow, "automatic CI must not repeat ASan")
+    check("--test-mode smoke" in workflow, "native CI builds must select bounded smoke tests")
+    check("--smoke" in workflow, "archive CI acceptance must select bounded smoke tests")
+    check("--mark-rebuilt" not in workflow, "source rebuild qualification runs locally")
+    import unittest
+    import test_ci_policy
+    result = unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.loadTestsFromModule(test_ci_policy))
+    check(result.wasSuccessful(), "smoke qualification/publication contracts failed")
     print("selftest: ok")
 
 
 if __name__ == "__main__":
     main()
+

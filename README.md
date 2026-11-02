@@ -264,10 +264,15 @@ The programs find their libraries beside themselves, so the Companion needs no l
 ### How a release is made, and rebuilding one
 
 `.github/workflows/auto-pigeon-release.yml` is the only build and release path. It freezes the commit and
-version once, builds and runs the whole GoogleTest suite natively per target (plus an AddressSanitizer run on
-Linux), packages each target, then, on a fresh runner per target, unpacks the ZIP into a path with spaces
-and compiles a sealed room, a deliberately leaking room, the thin-brush reproducer, the two sliver reproducers
-and the thin-material control with the unpacked programs, asking each for its solid, its water and its air. Only archives that passed are published, by one job, once; a rerun never replaces a published file.
+version once, builds each target natively and runs one named regression with a 60-second deadline.
+It packages each target, then smoke-checks the extracted archive on a fresh native runner: digests,
+manifest, architecture, runtime libraries, entry points, a tiny sealed room through QBSP/VIS/LIGHT,
+and a deliberately leaking room. Source is archived without a second CI rebuild.
+Only archives that passed those smoke checks are published, by one job, once; a rerun never replaces a
+published file. Reports and release notes label smoke coverage explicitly. Full GoogleTest suites,
+AddressSanitizer, broad geometry acceptance and source-archive rebuild qualification run locally by
+the agent before wrap-up, under [the testing policy](ci/auto-pigeon/TESTING.md). CI does not repeat them;
+a native smoke check does not replace native full-suite coverage when the change needs it.
 Pull requests run the same validation with a read-only token and publish nothing.
 
 The steps are plain Python (3.8+, standard library) and run the same way on a workstation:
@@ -447,3 +452,4 @@ make
 
 Builds using Embree are licensed under GPLv3+ for compatibility with the
 Apache license.
+

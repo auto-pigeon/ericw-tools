@@ -17,11 +17,12 @@ import shutil
 import stat
 import struct
 import sys
+import subprocess
 import zipfile
 
 import closure
 from bspread import Bsp
-from common import ACCEPTANCE_STEPS, HERE, PLATFORMS, PROGRAMS, REPO, Failure, exe, load_json, log, require_native, run, sha256_file, write_json
+from common import ACCEPTANCE_STEPS, SMOKE_ACCEPTANCE_STEPS, HERE, PLATFORMS, PROGRAMS, REPO, Failure, exe, load_json, log, require_native, run, sha256_file, write_json
 
 REQUIRED_MEMBERS = ("README.md", "build-info.json", "MANIFEST.json", "licenses/COPYING", "licenses/gpl_v3.txt",
                     "licenses/LICENSE-embree.txt", "licenses/LICENSE-oneTBB.txt")
@@ -118,6 +119,7 @@ ROOM_PROBES = (
 
 class Acceptance:
     def __init__(self, args):
+        self.smoke = args.smoke
         self.platform = args.platform
         self.work = pathlib.Path(args.work).resolve()
         self.report_path = args.report
@@ -130,6 +132,7 @@ class Acceptance:
         self.report = {
             "schema": "auto-pigeon-ericw-acceptance/1", "platform": self.platform, "verdict": "fail",
             "commit": self.plan["commit"], "version": self.plan["version"], "stamp": self.plan["stamp"],
+            "acceptance_mode": "smoke" if self.smoke else "full",
             "asset": self.archive.name, "steps": self.steps, "commands": self.commands,
         }
 
@@ -164,7 +167,7 @@ class Acceptance:
         """Run an archived program by absolute path; wait; record; compare its exit status."""
         program = self.bin / exe(self.platform, name)
         label = label or "%02d-%s" % (len(self.commands) + 1, name)
-        code, out, seconds = run([program, *args], cwd=cwd, env=self.clean_env(), check=False, capture=True, timeout=1800)
+        code, out, seconds = run([program, *args], cwd=cwd, env=self.clean_env(), check=False, capture=True, timeout=60 if self.smoke else 1800)
         self.logs.mkdir(parents=True, exist_ok=True)
         (self.logs / (label + ".log")).write_text(out, encoding="utf-8", errors="replace")
         record = {"label": label, "program": name, "args": [str(a) for a in args], "cwd": str(cwd), "exit": code,
@@ -478,6 +481,10 @@ class Acceptance:
         self.step("1d. architecture and runtime closure of all six programs", self.verify_architecture_and_closure)
         self.step("2. help entry points and one version identity", self.entry_points)
         self.step("3. sealed room: leak test, qbsp, full VIS, LIGHT, inspection", self.sealed_room)
+        if self.smoke:
+            self.step("5. negative control: the room with a missing wall leaks and is refused", self.negative_control)
+            self.report["verdict"] = "pass"
+            return
         self.step("4. the same room from a path and working directory with spaces", self.sealed_room_with_spaces)
         self.step("5. negative control: the room with a missing wall leaks and is refused", self.negative_control)
         self.step("6. thin-fragment reproducer, ordinary and -forcegoodtree, hulls 0-2", self.thin_fragment)
@@ -495,20 +502,22 @@ def main():
     ap.add_argument("--plan", required=True)
     ap.add_argument("--work", required=True)
     ap.add_argument("--report", required=True)
+    ap.add_argument("--smoke", action="store_true", help="CI: archive integrity, entry points, tiny sealed room and leak negative control only")
     args = ap.parse_args()
     acceptance = Acceptance(args)
     try:
         acceptance.run_all()
-    except (Failure, ValueError, OSError, KeyError) as e:
+    except (Failure, ValueError, OSError, KeyError, subprocess.TimeoutExpired) as e:
         acceptance.report["failure"] = "%s: %s" % (type(e).__name__, e)
         log("\nACCEPTANCE FAILED: %s" % e)
     finally:
         acceptance.report["archive_sha256"] = acceptance.package.get("sha256")
         write_json(args.report, acceptance.report)
     passed = acceptance.report["verdict"] == "pass"
-    log("\nverdict: %s (%d/%d steps passed)" % (acceptance.report["verdict"], sum(s["status"] == "pass" for s in acceptance.steps), ACCEPTANCE_STEPS))
+    log("\nverdict: %s (%d/%d steps passed)" % (acceptance.report["verdict"], sum(s["status"] == "pass" for s in acceptance.steps), SMOKE_ACCEPTANCE_STEPS if args.smoke else ACCEPTANCE_STEPS))
     sys.exit(0 if passed else 1)
 
 
 if __name__ == "__main__":
     main()
+

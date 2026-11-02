@@ -16,6 +16,32 @@ PROGRAMS = ("qbsp", "vis", "light", "bspinfo", "bsputil", "maputil")
 # How many steps accept.py runs (1a-1d, 2-8). publish.py refuses a report with any other number: a report that
 # stopped early, or one written by an older acceptance that did not ask the newer questions, is not a pass.
 ACCEPTANCE_STEPS = 11
+SMOKE_ACCEPTANCE_STEPS = 7
+FOCUSED_TEST = "testmapsQ1.cliphull2ThinFragmentSplit"
+
+
+def validated_tests(report):
+    """Keep a declared CI smoke distinct from an unqualified local iteration."""
+    mode = report.get("test_mode", "full")
+    if mode not in ("full", "smoke"):
+        raise Failure("only full or explicit smoke qualification can be packaged")
+    if bool(report["full_suite_skipped"]) != (mode == "smoke"):
+        raise Failure("test mode and full-suite execution disagree")
+    suites = report["tests"]
+    focused = suites.get("focused", {})
+    if (focused.get("tests_run") != 1 or focused.get("names_run") != [FOCUSED_TEST]
+            or focused.get("exit") != 0 or focused.get("failures") != 0
+            or focused.get("errors") != 0 or focused.get("skipped") != 0):
+        raise Failure("the named smoke regression did not execute and pass exactly once")
+    if mode == "smoke":
+        if set(suites) != {"focused"}:
+            raise Failure("a smoke report must contain only its declared focused run")
+        return focused
+    full = suites.get("full", {})
+    if (full.get("tests_run", 0) <= 0 or full.get("exit") != 0
+            or full.get("failures") != 0 or full.get("errors") != 0):
+        raise Failure("the full suite did not execute successfully")
+    return full
 ASSET_PREFIX = "auto-pigeon-ericw-tools"
 TAG_PREFIX = "auto-pigeon-ericw-v"
 
@@ -99,3 +125,4 @@ def require_native(platform):
         if code == 0 and out.strip() == "1":
             raise Failure("this process is translated by Rosetta; that is not a native %s host" % platform)
     return host
+
