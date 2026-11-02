@@ -269,7 +269,11 @@ It packages each target, then smoke-checks the extracted archive on a fresh nati
 manifest, architecture, runtime libraries, entry points, a tiny sealed room through QBSP/VIS/LIGHT,
 and a deliberately leaking room. Source is archived without a second CI rebuild.
 Only archives that passed those smoke checks are published, by one job, once; a rerun never replaces a
-published file. Reports and release notes label smoke coverage explicitly. Full GoogleTest suites,
+published file. Linux, Windows and the source archive are required: if one of them failed, was cancelled
+or did not run, nothing is published. The macOS targets are optional and run as their own chain: one that
+fails or is cancelled, including a job GitHub could not give a runner, does not stop the other targets. It
+is left out of the release and named in the release notes and in `release-manifest.json`. Cancelling the
+workflow publishes nothing. Reports and release notes label smoke coverage explicitly. Full GoogleTest suites,
 AddressSanitizer, broad geometry acceptance and source-archive rebuild qualification run locally by
 the agent before wrap-up, under [the testing policy](ci/auto-pigeon/TESTING.md). CI does not repeat them;
 a native smoke check does not replace native full-suite coverage when the change needs it.

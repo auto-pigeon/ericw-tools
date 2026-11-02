@@ -57,6 +57,14 @@ report unavailable required coverage honestly.
   a 60-second deadline and the acceptance job has a 10-minute budget.
 - The corresponding-source archive is produced with its pinned dependencies and
   hashes. CI does not rebuild it a second time or mark it rebuild-verified.
+- Required and optional targets are separate job chains: Linux and Windows
+  (`build` -> `accept`), macOS (`build-candidate` -> `accept-candidate`). A required
+  target or the source archive that failed, was cancelled or did not run blocks
+  `publish`. An optional target that did not pass is left out and named in the notes
+  and manifest. `continue-on-error` forgives a job that failed, not one cancelled before
+  it got a runner, so never put the two kinds of target in one matrix. Cancelling the
+  workflow publishes nothing: use `!cancelled()`, never a job-level `always()`.
+  `test_ci_policy.py` walks the workflow's real conditions over these outcomes.
 
 CI does not run the full GoogleTest suite, ASan, broad geometry sweeps, repeated full
 archive regressions or full-map VIS/LIGHT workloads. Do not restore those on push,

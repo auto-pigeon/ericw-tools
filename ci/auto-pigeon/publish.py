@@ -38,8 +38,9 @@ def evaluate(platform, plan, artifacts):
     package_path, zip_path = find(artifacts, stem + ".package.json"), find(artifacts, asset)
     report_path = find(artifacts, "acceptance-%s.json" % platform)
     if not package_path or not zip_path:
-        return None, ("no archive of it reached this job: its build job did not finish (native build, test suite, packaging or the "
-                      "upload of the packaged archive), so nothing was accepted")
+        return None, ("no archive of it reached this job: its build job did not finish (it failed or was cancelled, for instance by "
+                      "getting no runner, in the native build, smoke test, packaging or the upload of the packaged archive), so "
+                      "nothing was accepted")
     if not report_path:
         return None, "the archive was built but its native acceptance produced no report"
     package, report = load_json(package_path), load_json(report_path)

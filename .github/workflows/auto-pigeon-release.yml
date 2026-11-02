@@ -7,6 +7,17 @@
 # The plan job freezes the commit, version, tag and version banner once; every other job reads it.
 # Only the publish job has contents: write. It consumes the archives the accept jobs approved and
 # never compiles. The tag it creates does not start this workflow again (push is limited to branches).
+#
+# Required targets and optional candidates are two chains on purpose, so that nothing optional is an
+# ancestor of a required acceptance:
+#
+#   plan -> build           -> accept            (linux, windows)  -+
+#   plan -> build-candidate -> accept-candidate  (macOS)            -+-> publish
+#   plan -> source                                                  -+
+#
+# A matrix has one aggregate result, and continue-on-error forgives a job that ran and failed, not one
+# that was cancelled: a macOS job GitHub could not give a runner (run 41418779022) has no step to forgive,
+# so in one shared matrix it stopped acceptance and publication for every target.
 # Heavy suites, ASan and source-archive rebuild qualification run locally before agent wrap-up.
 # All logic is in ci/auto-pigeon/*.py so that every step can be run the same way on a workstation.
 
@@ -69,17 +80,13 @@ jobs:
     needs: plan
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
-    # a macOS candidate that fails stays unpublished and does not stop the required targets
-    continue-on-error: ${{ matrix.candidate }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { platform: linux-amd64, runner: ubuntu-22.04, candidate: false, python: python3 }
-          - { platform: windows-amd64, runner: windows-2022, candidate: false, python: python }
-          - { platform: macos-amd64, runner: macos-15-intel, candidate: true, python: python3 }
-          - { platform: macos-arm64, runner: macos-15, candidate: true, python: python3 }
-    steps:
+          - { platform: linux-amd64, runner: ubuntu-22.04, python: python3 }
+          - { platform: windows-amd64, runner: windows-2022, python: python }
+    steps: &build-steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.commit }}
@@ -104,6 +111,21 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+
+  build-candidate:
+    name: Build and smoke (${{ matrix.platform }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    # a macOS candidate that fails stays unpublished and is named in the release notes
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos-amd64, runner: macos-15-intel, python: python3 }
+          - { platform: macos-arm64, runner: macos-15, python: python3 }
+    steps: *build-steps
 
   source:
     name: Source archive
@@ -137,16 +159,13 @@ jobs:
     needs: [plan, build]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
-    continue-on-error: ${{ matrix.candidate }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { platform: linux-amd64, runner: ubuntu-22.04, candidate: false, python: python3 }
-          - { platform: windows-amd64, runner: windows-2022, candidate: false, python: python }
-          - { platform: macos-amd64, runner: macos-15-intel, candidate: true, python: python3 }
-          - { platform: macos-arm64, runner: macos-15, candidate: true, python: python3 }
-    steps:
+          - { platform: linux-amd64, runner: ubuntu-22.04, python: python3 }
+          - { platform: windows-amd64, runner: windows-2022, python: python }
+    steps: &accept-steps
       # a fresh runner: no build tree, no dependency directory, no submodules; only the scripts and the fixtures
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -172,11 +191,33 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  accept-candidate:
+    name: Smoke-check the extracted archive (${{ matrix.platform }})
+    # One candidate's build may have failed or been cancelled and the other's not, so this cannot use the default
+    # condition. A matrix entry cannot be dropped by `if`: an entry whose archive never reached the run fails at
+    # its download, stays unaccepted and produces no report, and publish.py names it. !cancelled(), never always():
+    # cancelling the workflow still stops this.
+    needs: [plan, build-candidate]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos-amd64, runner: macos-15-intel, python: python3 }
+          - { platform: macos-arm64, runner: macos-15, python: python3 }
+    steps: *accept-steps
+
   publish:
     name: Publish the development prerelease
-    # runs only when every job above succeeded (a failed macOS candidate does not fail its job), on main, when planned
-    needs: [plan, build, source, accept]
-    if: needs.plan.outputs.publish == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    # Waits for the candidates so that it can read their reports, and has to state its own gates because a cancelled
+    # candidate would fail the default condition. Each one compares with 'success', so a required target or source
+    # archive that failed, was cancelled or was skipped blocks this job. publish.py then asks the same of the bytes,
+    # and leaves out any candidate without a passing report. !cancelled(), never always(): a cancelled workflow publishes nothing.
+    needs: [plan, source, accept, accept-candidate]
+    if: ${{ !cancelled() && needs.plan.outputs.publish == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.source.result == 'success' && needs.accept.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     permissions:
