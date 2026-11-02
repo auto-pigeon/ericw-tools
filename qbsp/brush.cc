@@ -23,8 +23,6 @@
 #include <qbsp/brush.hh>
 
 #include <algorithm>
-
-#include <algorithm>
 #include <cstring>
 #include <list>
 #include <common/log.hh>
