@@ -236,7 +236,9 @@ the download is intact; these builds are not signed.
   piece later split off wholly past that plane is marked `past_fold`. It stays an ordinary portal in every other way and only
   the fills refuse it, so faces, VIS and the portal file are what they were. Keeping such a piece draw-only instead moved one
   sliver past the sculpt tests' bound on Windows and macOS arm64. `testmapsQ1.foldedNeedleDoesNotJoinLeaves` (`testmaps/q1_folded_needle_corridor.map`, 310 brushes
-  reduced from that map; with its west plug removed the same map must still leak).
+  reduced from that map; with its west plug removed the same map must still leak), and
+  `testmapsQ1.foldedNeedleAuthoredCorridors`: two corridors made only by the kernel that 1.4536 read as leaks in hull 2 and
+  hull 1, found by AUT's optional `run-bend-chain-sweep.sh`.
 
 ### Use in the Auto-Pigeon Companion
 

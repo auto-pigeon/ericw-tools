@@ -4325,6 +4325,20 @@ TEST(testmapsQ1, foldedNeedleDoesNotJoinLeaves)
     EXPECT_TRUE(std::filesystem::exists(open_paths.pts));
 }
 
+TEST(testmapsQ1, foldedNeedleAuthoredCorridors)
+{
+    // NEW_377, the same defect as foldedNeedleDoesNotJoinLeaves in corridors made only by the product's kernel: release 1.4536
+    // reads each as a leak in the hull named, with hull 0 sealed. Expanding brushes cannot open a map hull 0 sealed.
+    for (const char *name : {"q1_folded_needle_bend_hull2.map", "q1_folded_needle_rotated_hull1.map"}) {
+        SCOPED_TRACE(name);
+        auto prt_path = std::filesystem::path(testmaps_dir) / name;
+        prt_path.replace_extension(".prt");
+        std::filesystem::remove(prt_path);
+        CompileTestmapQ1WithoutCheckBsp(name, {"-leaktest", "-forcegoodtree"});
+        EXPECT_TRUE(std::filesystem::exists(prt_path)) << "no portal file: the map leaked";
+    }
+}
+
 TEST(testmapsQ1, clipHullInsideOneBrushIsOneLeaf)
 {
     // NEW_329: in a collision hull every brush is plain SOLID, so BuildTree_r makes a node that lies wholly inside one
