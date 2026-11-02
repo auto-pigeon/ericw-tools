@@ -240,6 +240,11 @@ the download is intact; these builds are not signed.
   `testmapsQ1.foldedNeedleAuthoredCorridors`: two corridors made only by the kernel that 1.4536 read as leaks in hull 2 and
   hull 1, found by AUT's optional `run-bend-chain-sweep.sh`.
 
+- A brush side reaching past the world extent no longer crashes `qbsp`. `CreateBrushWindings` dropped such a winding inside the
+  loop walking it, then moved from the empty optional, so the side kept freed points and the crash came later, in
+  `SplitBrush`'s allocator (upstream has the same code). The side is now dropped with its warning and nothing else changes.
+  Windings use TBB's allocator, so AddressSanitizer does not see this. `testmapsQ1.brushPastWorldExtent`.
+
 ### Use in the Auto-Pigeon Companion
 
 The Companion runs compilers you installed; it does not download or bundle these. Keep each release in

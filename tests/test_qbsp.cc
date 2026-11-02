@@ -4339,6 +4339,21 @@ TEST(testmapsQ1, foldedNeedleAuthoredCorridors)
     }
 }
 
+TEST(testmapsQ1, brushPastWorldExtent)
+{
+    // NEW_377. A side whose winding reaches past the world extent is dropped with a warning. CreateBrushWindings reset the
+    // winding inside the loop walking it and then moved from the empty optional, so the side kept freed points and qbsp
+    // crashed later, in SplitBrush's allocator: every run on this map through release 1.4543, and on a re-bent corridor the
+    // kernel wrote with a far vertex. The room must still compile sealed, with its air open.
+    auto prt_path = std::filesystem::path(testmaps_dir) / "q1_brush_past_world_extent.prt";
+    std::filesystem::remove(prt_path);
+    const mbsp_t bsp = CompileTestmapQ1WithoutCheckBsp("q1_brush_past_world_extent.map", {"-leaktest", "-worldextent", "400"});
+    EXPECT_TRUE(std::filesystem::exists(prt_path)) << "no portal file: the map leaked";
+    for (int hull : {0, 1, 2}) {
+        EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, hull, {0, 0, 0}));
+    }
+}
+
 TEST(testmapsQ1, clipHullInsideOneBrushIsOneLeaf)
 {
     // NEW_329: in a collision hull every brush is plain SOLID, so BuildTree_r makes a node that lies wholly inside one

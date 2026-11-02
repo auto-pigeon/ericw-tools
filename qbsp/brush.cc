@@ -22,6 +22,9 @@
 
 #include <qbsp/brush.hh>
 
+#include <algorithm>
+
+#include <algorithm>
 #include <cstring>
 #include <list>
 #include <common/log.hh>
@@ -283,22 +286,19 @@ bool CreateBrushWindings(bspbrush_t &brush)
             w = w->clip_front(plane, qbsp_options.epsilon.value(), false);
         }
 
+        // a winding reaching past the world is no winding. Decide that first and reset it after: resetting it inside this
+        // loop freed the points being walked, and the move below then took a dangling winding from an empty optional
+        // (NEW_377: a heap use-after-free, seen as a crash in SplitBrush's allocator much later)
+        if (w && std::any_of(w->begin(), w->end(), [](const qvec3d &point) {
+                return std::any_of(point.begin(), point.end(),
+                    [](double v) { return fabs(v) > qbsp_options.worldextent.value(); });
+            })) {
+            logging::print("WARNING: {}: invalid winding point\n",
+                brush.mapbrush ? brush.mapbrush->line : parser_source_location{});
+            w = std::nullopt;
+        }
+
         if (w) {
-            for (auto &p : *w) {
-                for (auto &v : p) {
-                    if (fabs(v) > qbsp_options.worldextent.value()) {
-                        logging::print("WARNING: {}: invalid winding point\n",
-                            brush.mapbrush ? brush.mapbrush->line : parser_source_location{});
-                        w = std::nullopt;
-                        break;
-                    }
-                }
-
-                if (!w) {
-                    break;
-                }
-            }
-
             side.w = std::move(*w);
             if (side.source) {
                 side.source->visible = true;
