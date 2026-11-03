@@ -267,12 +267,25 @@ Create all of the windings for the specified brush, and
 calculate its bounds.
 ==================
 */
+// two faces of one brush closer in direction than this (a sine) are clipped against one another only after every
+// other plane, when the winding is the face itself; see CreateBrushWindings
+constexpr double COINCIDENT_FACE_MAX_SINE = 1e-3;
+
 bool CreateBrushWindings(bspbrush_t &brush)
 {
     for (int i = 0; i < brush.sides.size(); i++) {
         side_t &side = brush.sides[i];
         std::optional<winding_t> w = BaseWindingForPlane<winding_t>(side.get_plane());
+        const qvec3d &normal = side.get_plane().get_normal();
 
+        // Faces of one brush that face the same way and lie within -epsilon of one another are one face: an editor
+        // writes such a set where it welds surfaces (NEW_390: a re-bent brick with five faces within 0.0002 of one
+        // plane). Each lies "on" the others, and clip_front drops a winding that is all "on", so every one of them
+        // lost its winding, the brush had no side there, its fragments were unbounded on that side, and splitting them
+        // gave world-sized caps and halves rejected as bogus: real material removed from a split. Such planes are
+        // clipped last, when the winding is the face itself; if it lies wholly on one of them, the earlier side keeps
+        // the face and the later is dropped. Faces with no such neighbour are clipped exactly as before.
+        std::vector<int> nearly_coincident;
         for (int j = 0; j < brush.sides.size() && w; j++) {
             if (i == j) {
                 continue;
@@ -280,7 +293,26 @@ bool CreateBrushWindings(bspbrush_t &brush)
             if (brush.sides[j].bevel) {
                 continue;
             }
+            const qvec3d &other = brush.sides[j].get_plane().get_normal();
+            if (qv::dot(normal, other) > 0 && qv::length(qv::cross(normal, other)) < COINCIDENT_FACE_MAX_SINE) {
+                nearly_coincident.push_back(j);
+                continue;
+            }
             const qplane3d &plane = map.planes[brush.sides[j].planenum ^ 1];
+            w = w->clip_front(plane, qbsp_options.epsilon.value(), false);
+        }
+        for (int j : nearly_coincident) {
+            if (!w) {
+                break;
+            }
+            const qplane3d &plane = map.planes[brush.sides[j].planenum ^ 1];
+            const auto counts = w->calc_sides(plane, nullptr, nullptr, qbsp_options.epsilon.value());
+            if (!counts[SIDE_FRONT] && !counts[SIDE_BACK]) {
+                if (j < i) {
+                    w = std::nullopt; // the earlier side is this face
+                }
+                continue;
+            }
             w = w->clip_front(plane, qbsp_options.epsilon.value(), false);
         }
 

@@ -4817,3 +4817,83 @@ TEST(testmapsQ1, nearCoplanarSplitInvalidBrushRefused)
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// One face of a brush written several times (NEW_390). An editor welding surfaces can write a brush's face as several
+// planes that differ by a few millionths of a radian and a few hundred-thousandths of a unit: distinct planes to the map
+// loader (normals more than NORMAL_EPSILON apart), and within qbsp's -epsilon (0.0001) of one another over the face.
+// CreateBrushWindings clipped each by the others, every one lay "on" the others, and all lost their windings, so the
+// brush had no side there. Seen on an Auto-Pigeon re-bent corridor (NEW_381 seed 1184: a brick with five such faces,
+// world-sized caps, nine halves rejected as bogus, three brushes removed from a split, a leak through solid). Here, a
+// pillar standing in the axial room with its top written three times: on release 1.4549 the whole pillar is EMPTY.
+// ---------------------------------------------------------------------------------------------
+
+struct coincident_top_t
+{
+    int copies = 3;
+    double tilt = 4e-6; // radians, each copy about a different horizontal axis
+    double step = 2e-5; // each copy this much higher at the pillar's axis
+    qvec3d centre{30, 20, 0};
+    bool mirrored = false; // the copies turn the other way round the pillar
+};
+
+static sub002_brush_t CoincidentTopPillar(const coincident_top_t &c, double size = 10, double height = 20)
+{
+    auto pillar = Sub002Box({c.centre[0] - size / 2, c.centre[1] - size / 2, -1},
+        {c.centre[0] + size / 2, c.centre[1] + size / 2, height});
+    for (int i = 1; i <= c.copies; i++) {
+        const double angle = (c.mirrored ? -1 : 1) * 2 * Q_PI * i / c.copies;
+        const qvec3d n = qv::normalize(qvec3d{c.tilt * cos(angle), c.tilt * sin(angle), 1});
+        pillar.planes.push_back({n, qv::dot(n, qvec3d{c.centre[0], c.centre[1], height + i * c.step})});
+    }
+    return pillar;
+}
+
+TEST(testmapsQ1, coincidentFacesKeepTheirBrush)
+{
+    const std::vector<std::pair<std::string, std::pair<coincident_top_t, sub002_xform_t>>> scenes = [] {
+        std::vector<std::pair<std::string, std::pair<coincident_top_t, sub002_xform_t>>> v;
+        auto add = [&](const std::string &name, auto &&change, sub002_xform_t xform = {}) {
+            coincident_top_t c;
+            change(c);
+            v.push_back({name, {c, xform}});
+        };
+        add("three", [](coincident_top_t &) {});
+        add("two", [](coincident_top_t &c) { c.copies = 2; });
+        add("five", [](coincident_top_t &c) { c.copies = 5; });
+        add("tilt_small", [](coincident_top_t &c) { c.tilt = 2e-6; });
+        add("tilt_large", [](coincident_top_t &c) { c.tilt = 8e-6; });
+        add("level", [](coincident_top_t &c) { c.step = 0; });
+        add("step_wider", [](coincident_top_t &c) { c.step = 5e-5; });
+        add("mirrored", [](coincident_top_t &c) { c.mirrored = true; c.centre = {30, -20, 0}; });
+        add("moved", [](coincident_top_t &) {}, sub002_xform_t{0, {37.5, -21.25, 13}});
+        add("turned", [](coincident_top_t &) {}, sub002_xform_t{90, {0, 0, 0}});
+        // the controls: copies 0.0003 apart are distinct faces (the lowest bounds the pillar), and in the room turned
+        // 15 degrees the copies do not all lie on one another; both compiled right before the repair as well
+        add("distinct", [](coincident_top_t &c) { c.step = 3e-4; });
+        add("turned_15", [](coincident_top_t &) {}, sub002_xform_t{15, {0, 0, 0}});
+        return v;
+    }();
+    for (const auto &[name, scene] : scenes) {
+        const auto &[c, xform] = scene;
+        for (const auto &extra_args : sub002_tree_modes) {
+            SCOPED_TRACE(fmt::format("{} {}", name, extra_args.back()));
+            const auto [bsp, bspx, prt] =
+                Sub002Compile("coincident_" + name, Sub002MapText({CoincidentTopPillar(c)}, sub002_east_t::WALL, xform),
+                    extra_args);
+            ASSERT_TRUE(prt.has_value());
+            const qvec3d &o = c.centre;
+            for (const qvec3d &inside : {o + qvec3d{0, 0, 5}, o + qvec3d{0, 0, 19.5}, o + qvec3d{3, -3, 19.95},
+                     o + qvec3d{-4.5, 4.5, 10}}) {
+                SCOPED_TRACE(fmt::format("pillar {}", inside));
+                EXPECT_EQ(CONTENTS_SOLID, Sub002Contents(bsp, 0, xform.point(inside)));
+            }
+            for (const qvec3d &air : {o + qvec3d{0, 0, 20.5}, o + qvec3d{0, 0, 50}, o + qvec3d{5.5, 0, 10}}) {
+                SCOPED_TRACE(fmt::format("air {}", air));
+                EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, 0, xform.point(air)));
+            }
+            EXPECT_NE(nullptr,
+                BSP_FindFaceAtPoint(&bsp, &bsp.dmodels[0], xform.point(o + qvec3d{1, 1, 20}), xform.turn({0, 0, 1})))
+                << "the pillar's top is not drawn";
+        }
+    }
+}
