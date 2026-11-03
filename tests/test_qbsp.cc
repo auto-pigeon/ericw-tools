@@ -4430,3 +4430,390 @@ TEST(testmapsQ1, clipHullInsideOneBrushIsOneLeaf)
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Two nearly coincident split planes (NEW_390). A node already split by plane A is split again by
+// plane B, 0.0004 from A and 1.5e-5 rad off it: the faces of two neighbouring bricks that should
+// have been one surface. Every brush that A cut ends on A, within PLANESIDE_EPSILON of B, so SplitBrush
+// kept each whole on the far side of B and the wedge between A and B got none of them: one EMPTY leaf
+// through solid, too thin to be carved again, through which the outside flood leaked. Found on an
+// Auto-Pigeon re-bent corridor (NEW_381 seed 1017: a film through a brush 6 units thick). This scene
+// is generated from the numbers below and nothing else: a closed room under a general rotation, with
+// bricks whose top faces lie alternately on A and B, and A running down through the floor into the void.
+// Every expectation is read off those half-spaces, never off what a compiler wrote.
+// ---------------------------------------------------------------------------------------------
+
+struct film_params_t
+{
+    double yaw = 62.09, pitch = -6.64, roll = 17.78; // degrees: the whole scene is turned so that no plane is axial
+    double slope = 30.29; // degrees: the slope of plane A in the scene's own frame
+    double tilt = 1.5e-5; // radians between A and B
+    double gap = 0.000376; // how far B lies from A where A crosses the floor's middle
+    int bricks = 4;
+    double brick_w = 9.27, bottom = -0.823, lead = 8.73, run = 99.52;
+    double floor = 1.859; // floor thickness (the other walls are 16)
+    qvec3d offset{0, 0, 0};
+    bool mirror = false;
+    bool open_floor = false; // a real hole through the floor where A crosses it: the room must leak
+    std::vector<std::vector<qplane3d>> extra; // more brushes, in the scene's frame
+};
+
+struct film_scene_t
+{
+    std::vector<std::vector<qplane3d>> brushes; // in the scene's own frame; inside is dot(n, p) <= d
+    qplane3d a, b;
+    double foot = -40;
+    double roomhalf = 128, roomtop = 128;
+};
+
+static std::vector<qplane3d> FilmBox(const qvec3d &lo, const qvec3d &hi)
+{
+    return {{{1, 0, 0}, hi[0]}, {{-1, 0, 0}, -lo[0]}, {{0, 1, 0}, hi[1]}, {{0, -1, 0}, -lo[1]}, {{0, 0, 1}, hi[2]},
+        {{0, 0, -1}, -lo[2]}};
+}
+
+static film_scene_t FilmScene(const film_params_t &p)
+{
+    film_scene_t s;
+    const double F = p.floor;
+    if (p.open_floor) {
+        s.brushes.push_back(FilmBox({-144, -144, -F}, {s.foot - 30, 144, 0}));
+        s.brushes.push_back(FilmBox({s.foot + 30, -144, -F}, {144, 144, 0}));
+        s.brushes.push_back(FilmBox({s.foot - 30, -144, -F}, {s.foot + 30, -60, 0}));
+        s.brushes.push_back(FilmBox({s.foot - 30, 60, -F}, {s.foot + 30, 144, 0}));
+    } else {
+        s.brushes.push_back(FilmBox({-144, -144, -F}, {144, 144, 0}));
+    }
+    s.brushes.push_back(FilmBox({-144, -144, 128}, {144, 144, 144}));
+    s.brushes.push_back(FilmBox({-144, -144, -F}, {-128, 144, 144}));
+    s.brushes.push_back(FilmBox({-144, -144, -F}, {144, -128, 144}));
+    s.brushes.push_back(FilmBox({-144, 128, -F}, {144, 144, 144}));
+    s.brushes.push_back(FilmBox({128, -144, -F}, {144, 144, 144}));
+
+    const double slope = p.slope * Q_PI / 180.0;
+    const qvec3d na = qv::normalize(qvec3d{-tan(slope), 0, 1});
+    const qvec3d pa{s.foot, 0, -F / 2};
+    s.a = {na, qv::dot(na, pa)};
+    const qvec3d nb = qv::normalize(qvec3d{-tan(slope + p.tilt), 0, 1});
+    s.b = {nb, qv::dot(nb, pa + na * p.gap)};
+    double y = -p.bricks * p.brick_w / 2;
+    for (int i = 0; i < p.bricks; i++) {
+        const qplane3d &top = (i % 2 == 0) ? s.a : s.b;
+        s.brushes.push_back({top, {{1, 0, 0}, s.foot + p.run}, {{-1, 0, 0}, -(s.foot - p.lead)},
+            {{0, 1, 0}, y + p.brick_w}, {{0, -1, 0}, -y}, {{0, 0, -1}, -p.bottom}});
+        y += p.brick_w;
+    }
+    for (const auto &brush : p.extra) {
+        s.brushes.push_back(brush);
+    }
+    return s;
+}
+
+// the player start, in the scene's frame: clear of the floor, the ceiling and the bricks in all three hulls
+static const qvec3d film_start{-60, -60, 45};
+
+// the scene's frame to the map's: mirror y (if asked), turn, move
+struct film_xform_t
+{
+    double m[3][3];
+    bool mirror;
+    qvec3d offset;
+
+    explicit film_xform_t(const film_params_t &p) : mirror(p.mirror), offset(p.offset)
+    {
+        const double y = p.yaw * Q_PI / 180, pi = p.pitch * Q_PI / 180, r = p.roll * Q_PI / 180;
+        const double rz[3][3] = {{cos(y), -sin(y), 0}, {sin(y), cos(y), 0}, {0, 0, 1}};
+        const double ry[3][3] = {{cos(pi), 0, sin(pi)}, {0, 1, 0}, {-sin(pi), 0, cos(pi)}};
+        const double rx[3][3] = {{1, 0, 0}, {0, cos(r), -sin(r)}, {0, sin(r), cos(r)}};
+        double t[3][3];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) {
+                t[i][j] = 0;
+                for (int k = 0; k < 3; k++)
+                    t[i][j] += ry[i][k] * rx[k][j];
+            }
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) {
+                m[i][j] = 0;
+                for (int k = 0; k < 3; k++)
+                    m[i][j] += rz[i][k] * t[k][j];
+            }
+    }
+    qvec3d vector(qvec3d v) const
+    {
+        if (mirror) {
+            v[1] = -v[1];
+        }
+        return {m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2], m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+            m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2]};
+    }
+    qvec3d point(const qvec3d &p) const { return vector(p) + offset; }
+};
+
+static std::string FilmMapText(const film_params_t &p, const std::string &wad)
+{
+    const film_scene_t s = FilmScene(p);
+    const film_xform_t x(p);
+    std::string text = fmt::format("// Game: Quake\n// Format: Standard\n{{\n\"classname\" \"worldspawn\"\n\"wad\" \"{}\"\n", wad);
+    for (const auto &brush : s.brushes) {
+        text += "{\n";
+        for (const auto &plane : brush) {
+            const qvec3d n = qv::normalize(plane.normal);
+            const qvec3d o = n * plane.dist;
+            const qvec3d a = fabs(n[2]) < 0.9 ? qvec3d{0, 0, 1} : qvec3d{1, 0, 0};
+            const qvec3d u = qv::normalize(qv::cross(n, a));
+            const qvec3d v = qv::cross(n, u);
+            // (p0 - p1) x (p2 - p1) is the outward normal; a mirror reverses it, so the points are swapped
+            qvec3d p0 = x.point(o + u * 64.0), p1 = x.point(o), p2 = x.point(o + v * 64.0);
+            if (p.mirror) {
+                std::swap(p0, p2);
+            }
+            text += fmt::format(
+                "( {:.10f} {:.10f} {:.10f} ) ( {:.10f} {:.10f} {:.10f} ) ( {:.10f} {:.10f} {:.10f} ) bolt9 0 0 0 1 1\n",
+                p0[0], p0[1], p0[2], p1[0], p1[1], p1[2], p2[0], p2[1], p2[2]);
+        }
+        text += "}\n";
+    }
+    const qvec3d start = x.point(film_start);
+    text += fmt::format(
+        "}}\n{{\n\"classname\" \"info_player_start\"\n\"origin\" \"{:.4f} {:.4f} {:.4f}\"\n}}\n", start[0], start[1], start[2]);
+    return text;
+}
+
+// how far inside the deepest source brush a point of the scene's frame is (negative: outside every brush by that much)
+static double FilmSourceDepth(const film_scene_t &s, const qvec3d &q)
+{
+    double best = -std::numeric_limits<double>::infinity();
+    for (const auto &brush : s.brushes) {
+        double depth = std::numeric_limits<double>::infinity();
+        for (const auto &plane : brush) {
+            depth = std::min(depth, plane.dist - qv::dot(plane.normal, q));
+        }
+        best = std::max(best, depth);
+    }
+    return best;
+}
+
+// points strictly between A and B (the wedge a split by both leaves), at heights through the floor and up into the room
+static std::vector<qvec3d> FilmGapPoints(const film_scene_t &s, const film_params_t &p)
+{
+    std::vector<qvec3d> points;
+    const double slope = tan(p.slope * Q_PI / 180.0);
+    for (double z : {-p.floor * 0.9, -p.floor * 0.7, -p.floor * 0.5, -p.floor * 0.3, -p.floor * 0.1, 0.5, 3.0, 12.0, 30.0}) {
+        for (double y = -120; y <= 120; y += 7.5) {
+            const qvec3d on_a{s.foot + (z + p.floor / 2) / slope, y, z};
+            const double gap = (s.b.dist - qv::dot(s.b.normal, on_a)) / qv::dot(s.b.normal, s.a.normal);
+            if (fabs(gap) < 2e-5) {
+                continue; // A and B cross here: no wedge to sample
+            }
+            points.push_back(on_a + s.a.normal * (gap * 0.5));
+        }
+    }
+    return points;
+}
+
+static void FilmCheck(const film_params_t &p, const mbsp_t &bsp, const std::optional<prtfile_t> &prt)
+{
+    const film_scene_t s = FilmScene(p);
+    const film_xform_t x(p);
+    const dmodelh2_t *world = &bsp.dmodels[0];
+
+    // sealed: -leaktest did not throw, and the portal file is this compile's own
+    ASSERT_TRUE(prt.has_value());
+    EXPECT_FALSE(prt->portals.empty());
+    ASSERT_FALSE(bsp.dclipnodes.empty());
+    for (int hullnum = 0; hullnum < 3; hullnum++) {
+        EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, hullnum, x.point(film_start))) << "hull " << hullnum;
+    }
+
+    // the wedge between A and B: material where the source has a brush, air where it has none
+    int air = 0, floor_material = 0;
+    for (const qvec3d &q : FilmGapPoints(s, p)) {
+        const double depth = FilmSourceDepth(s, q);
+        const bool in_room = fabs(q[0]) < s.roomhalf - 0.05 && fabs(q[1]) < s.roomhalf - 0.05 && q[2] > 0.05 &&
+                             q[2] < s.roomtop - 0.05;
+        SCOPED_TRACE(fmt::format("gap point {} (scene frame), source depth {}", q, depth));
+        if (depth >= 0.05) {
+            floor_material += q[2] < 0;
+            EXPECT_EQ(CONTENTS_SOLID, Sub002Contents(bsp, 0, x.point(q))) << "source material reads empty";
+        } else if (depth <= -0.05 && in_room) {
+            air++;
+            EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, 0, x.point(q))) << "source air reads solid";
+        }
+    }
+    EXPECT_GE(floor_material, 40); // the samples did reach the floor's solid
+    EXPECT_GE(air, 40); // and the room's air
+
+    // a coarse lattice of the room: its air is air and its bricks are solid
+    for (double gx = -120; gx <= 120; gx += 20) {
+        for (double gy = -120; gy <= 120; gy += 20) {
+            for (double gz : {0.25, 2.0, 10.0, 40.0, 120.0}) {
+                const qvec3d q{gx, gy, gz};
+                const double depth = FilmSourceDepth(s, q);
+                if (fabs(depth) < 0.05) {
+                    continue;
+                }
+                SCOPED_TRACE(fmt::format("room point {} (scene frame), source depth {}", q, depth));
+                EXPECT_EQ(depth > 0 ? CONTENTS_SOLID : CONTENTS_EMPTY, Sub002Contents(bsp, 0, x.point(q)));
+            }
+        }
+    }
+
+    // drawn where the source puts surfaces: the floor beside the bricks, and an A brick's and a B brick's top
+    const double slope = tan(p.slope * Q_PI / 180.0);
+    const double y0 = -p.bricks * p.brick_w / 2;
+    const double xt = s.foot + 40;
+    const std::pair<qvec3d, qvec3d> faces[] = {{{80, 80, 0}, {0, 0, 1}},
+        {{xt, y0 + p.brick_w / 2, slope * 40 - p.floor / 2}, s.a.normal},
+        {{xt, y0 + p.brick_w * 1.5, (s.b.dist - s.b.normal[0] * xt) / s.b.normal[2]}, s.b.normal}};
+    for (const auto &[foot, normal] : faces) {
+        SCOPED_TRACE(fmt::format("face at {} (scene frame)", foot));
+        EXPECT_NE(nullptr, BSP_FindFaceAtPoint(&bsp, world, x.point(foot), x.vector(normal)));
+    }
+}
+
+static std::tuple<mbsp_t, bspxentries_t, std::optional<prtfile_t>> FilmCompile(
+    const std::string &name, const film_params_t &p, const std::vector<std::string> &extra_args)
+{
+    const auto wad = (std::filesystem::path(testmaps_dir) / "deprecated" / "free_wad.wad").generic_string();
+    return Sub002Compile(name, FilmMapText(p, wad), extra_args);
+}
+
+TEST(testmapsQ1, nearCoplanarSplitKeepsMaterial)
+{
+    // the committed map is this generator's text, so it can be given to an old archive by hand: releases up to 1.4549
+    // report the leak through the floor, and read the wedge inside the floor as EMPTY when it is compiled without -leaktest
+    {
+        std::ifstream file(std::filesystem::path(testmaps_dir) / "q1_near_coplanar_film.map", std::ios::binary);
+        ASSERT_TRUE(file.good());
+        std::string committed((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        std::erase(committed, '\r');
+        const std::string header = "// NEW_390";
+        ASSERT_EQ(0u, committed.rfind(header, 0)) << "the map starts with its comment";
+        committed.erase(0, committed.find("// Game:"));
+        EXPECT_EQ(FilmMapText({}, "deprecated/free_wad.wad"), committed);
+    }
+    for (const auto &extra_args : sub002_tree_modes) {
+        SCOPED_TRACE(extra_args.back());
+        std::filesystem::remove(std::filesystem::path(testmaps_dir) / "q1_near_coplanar_film.prt");
+        const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_near_coplanar_film.map", extra_args);
+        FilmCheck({}, bsp, prt);
+    }
+}
+
+TEST(testmapsQ1, nearCoplanarSplitNearbyScenes)
+{
+    // the same defect does not hang on one set of numbers: nearby angles and offsets between the planes, the scene
+    // moved, mirrored and turned. Each of these leaked through the floor on release 1.4549 in both tree modes.
+    std::vector<std::pair<std::string, film_params_t>> scenes;
+    auto add = [&](const std::string &name, auto &&change) {
+        film_params_t p;
+        change(p);
+        scenes.emplace_back(name, p);
+    };
+    add("slope_up", [](film_params_t &p) { p.slope += 0.5; });
+    add("slope_down", [](film_params_t &p) { p.slope -= 0.5; });
+    add("tilt_double", [](film_params_t &p) { p.tilt *= 2; });
+    add("tilt_half", [](film_params_t &p) { p.tilt /= 2; });
+    add("gap_wider", [](film_params_t &p) { p.gap *= 1.5; });
+    add("gap_narrower", [](film_params_t &p) { p.gap /= 1.5; });
+    add("moved", [](film_params_t &p) { p.offset = {37.5, -21.25, 13.0}; });
+    add("mirrored", [](film_params_t &p) { p.mirror = true; });
+    add("turned", [](film_params_t &p) { p.yaw += 90; });
+    for (const auto &[name, p] : scenes) {
+        for (const auto &extra_args : sub002_tree_modes) {
+            SCOPED_TRACE(fmt::format("{} {}", name, extra_args.back()));
+            std::optional<std::tuple<mbsp_t, bspxentries_t, std::optional<prtfile_t>>> compiled;
+            try {
+                compiled = FilmCompile("film_" + name, p, extra_args);
+            } catch (const std::exception &e) {
+                ADD_FAILURE() << "the room leaks: " << e.what();
+                continue;
+            }
+            FilmCheck(p, std::get<0>(*compiled), std::get<2>(*compiled));
+        }
+    }
+}
+
+TEST(testmapsQ1, nearCoplanarSplitRealGapStillLeaks)
+{
+    // the other direction: refusing a split plane must not seal a room by filling. The same scene with a real hole
+    // through the floor where A crosses it must leak, in both tree modes, and get no portal file.
+    for (const bool mirror : {false, true}) {
+        for (const auto &extra_args : sub002_tree_modes) {
+            SCOPED_TRACE(fmt::format("mirror {} {}", mirror, extra_args.back()));
+            film_params_t p;
+            p.open_floor = true;
+            p.mirror = mirror;
+            const auto paths = Sub002Paths("film_open_floor");
+            const auto wad = (std::filesystem::path(testmaps_dir) / "deprecated" / "free_wad.wad").generic_string();
+            std::ofstream(paths.map) << FilmMapText(p, wad);
+            auto compile = [&]() { LoadTestmap(paths.map, paths.bsp, extra_args); };
+            EXPECT_THAT(compile,
+                testing::ThrowsMessage<std::exception>(testing::HasSubstr("Aborting because -leaktest was used.")));
+            EXPECT_FALSE(std::filesystem::exists(paths.prt));
+            EXPECT_TRUE(std::filesystem::exists(paths.pts));
+        }
+    }
+}
+
+TEST(testmapsQ1, nearCoplanarSplitInvalidBrushRefused)
+{
+    // refusing split planes must not turn an invalid brush into material. A box whose planes contradict one another
+    // (no interior) in the turned scene, and a box with no top (half-spaces reaching the world's edge) in the axial
+    // room, are refused with a warning naming them, as before: neither becomes solid, and each room still seals, the
+    // turned one with its film kept. (A box with no top in the TURNED scene is not refused: hull 0 becomes two leaves
+    // with exit 0, on release 1.4549 as on this one. That is README's known limit, not asserted here.)
+    auto log_of = [](const std::filesystem::path &map) {
+        std::ifstream log(std::filesystem::path(map).replace_extension(".log"));
+        EXPECT_TRUE(log.good()) << "qbsp wrote no log beside the map";
+        return std::string((std::istreambuf_iterator<char>(log)), std::istreambuf_iterator<char>());
+    };
+    const auto wad = (std::filesystem::path(testmaps_dir) / "deprecated" / "free_wad.wad").generic_string();
+    film_params_t p;
+    auto contradiction = FilmBox({-110, 60, 10}, {-80, 90, 30});
+    contradiction.push_back({{0, 0, -1}, -50}); // z >= 50 and z <= 30
+    p.extra = {contradiction};
+    for (const auto &extra_args : sub002_tree_modes) {
+        SCOPED_TRACE(extra_args.back());
+        {
+            SCOPED_TRACE("contradiction, turned scene");
+            const auto paths = Sub002Paths("film_contradiction");
+            std::ofstream(paths.map) << FilmMapText(p, wad);
+            const auto [bsp, bspx, prt] = LoadTestmap(paths.map, paths.bsp, extra_args);
+            ASSERT_TRUE(prt.has_value());
+            const film_xform_t x(p);
+            for (const qvec3d &air : {qvec3d{-95, 75, 20}, qvec3d{-95, 75, 40}, qvec3d{-95, 75, 60}}) {
+                SCOPED_TRACE(fmt::format("the box's place {} (scene frame)", air));
+                EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, 0, x.point(air)));
+            }
+            film_params_t plain;
+            const film_scene_t s = FilmScene(plain);
+            int floor_material = 0;
+            for (const qvec3d &q : FilmGapPoints(s, plain)) {
+                if (q[2] < 0 && FilmSourceDepth(s, q) >= 0.05) {
+                    floor_material++;
+                    EXPECT_EQ(CONTENTS_SOLID, Sub002Contents(bsp, 0, x.point(q))) << fmt::format("gap point {}", q);
+                }
+            }
+            EXPECT_GE(floor_material, 40);
+            EXPECT_NE(std::string::npos, log_of(paths.map).find("no visible sides on brush"));
+        }
+        {
+            SCOPED_TRACE("no top, axial room");
+            auto open_top = Sub002Box({60, 60, 10}, {90, 90, 30});
+            open_top.planes.erase(open_top.planes.begin() + 4); // the +z plane
+            const auto paths = Sub002Paths("film_open_top");
+            std::ofstream(paths.map) << Sub002MapText({open_top});
+            const auto [bsp, bspx, prt] = LoadTestmap(paths.map, paths.bsp, extra_args);
+            ASSERT_TRUE(prt.has_value());
+            for (const qvec3d &air : {qvec3d{75, 75, 20}, qvec3d{75, 75, 100}, qvec3d{75, 75, 250}}) {
+                SCOPED_TRACE(fmt::format("the box's place {}", air));
+                EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, 0, air));
+            }
+            EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, 0, {-200, -200, 40}));
+            EXPECT_NE(std::string::npos, log_of(paths.map).find("brush bounds out of range"));
+        }
+    }
+}
+

@@ -71,6 +71,8 @@ struct bspstats_t : logging::stat_tracker_t
     stat &c_tinyvolumes = register_stat("tiny volumes removed after splits");
     // brush fragments left in a leaf whose middle is outside their brush (see LeafNode)
     stat &c_leafnotinbrush = register_stat("brush fragments not filling their leaf");
+    // split planes refused because a nearly coincident ancestor plane would leave a brush film out of a sliver
+    stat &c_filmsplits = register_stat("split planes refused for a brush film");
     // collision-hull nodes made leaves because they lie wholly inside one solid brush (see NodeInsideOneSolidBrush)
     stat &c_solidcover = register_stat("collision-hull nodes inside one solid brush");
 };
@@ -907,6 +909,90 @@ inline bool CheckPlaneAgainstVolume(size_t planenum, const node_t *node)
 }
 
 /*
+================
+SplitLeavesBrushFilm
+
+Would splitting this node by `planenum` leave a film of some brush's material out of the child it
+belongs to?
+
+SplitBrush keeps a brush whole, on one side, when it reaches less than PLANESIDE_EPSILON past the
+split plane: that sliver of material is given to the other child's region, where it is gone. On a
+thick child that costs a skin under a thousandth of a unit at the brush's surface. But when the node
+is already bounded by an ancestor plane A that is nearly the same plane as the split B, the child
+between A and B is a wedge or slab that is itself that thin. Every brush that was cut by A and so
+ends on A, within PLANESIDE_EPSILON of B, is then kept on the far side of B whole, and the wedge
+between them gets none of them: an EMPTY leaf through the middle of solid. The wedge cannot be
+carved again either (a cut across it has a cap thinner than SplitCapIsDegenerate allows), so its
+contents are decided for all of it at once, though it runs through solid and air alike, and the
+outside flood leaks through it (NEW_390: two bend bricks whose outer faces lie 0.0002 apart and
+1.5e-5 rad off one another split a 200-unit node; 15 of its 17 brushes lost their fragment of a
+0.0002-0.002 wedge, among them a brush 6 units thick; testmapsQ1.nearCoplanarSplitKeepsMaterial).
+
+So: refused when a brush straddles B, reaches past it by more than FILM_MIN_REACH and less than
+PLANESIDE_EPSILON on one side (so it would be kept whole on the other), and that reach is made by
+one of its sides on an ancestor node plane (onnode) within FILM_MAX_SINE of B's direction. The
+other planes of the node, and B itself in a smaller node, still split it; A alone then stands for
+both of the nearly coincident faces, which is the same thousandth-of-a-unit judgment SplitBrush
+already makes about a brush's own surface.
+================
+*/
+constexpr double FILM_MIN_REACH = 1e-6;
+// the strip where two planes at this angle are closer than PLANESIDE_EPSILON is EDGE_LENGTH_EPSILON wide:
+// narrower than that, a portal across it is tiny and the flood cannot pass through it anyway
+constexpr double FILM_MAX_SINE = PLANESIDE_EPSILON / EDGE_LENGTH_EPSILON;
+
+static bool SplitLeavesBrushFilm(const bspbrush_t::container &brushes, size_t planenum)
+{
+    const qbsp_plane_t &plane = map.get_plane(planenum);
+    const qvec3d &normal = plane.get_normal();
+
+    for (auto &brush : brushes) {
+        // the brush's box must reach past the plane on both sides; exact (BoxOnPlaneSide's own
+        // PLANESIDE_EPSILON band would hide the very reach looked for here)
+        const qvec3d centre = (brush->bounds.mins() + brush->bounds.maxs()) * 0.5;
+        const qvec3d half = (brush->bounds.maxs() - brush->bounds.mins()) * 0.5;
+        const double box_centre = plane.distance_to(centre);
+        const double box_radius =
+            std::abs(normal[0]) * half[0] + std::abs(normal[1]) * half[1] + std::abs(normal[2]) * half[2];
+        if (box_centre - box_radius >= -FILM_MIN_REACH || box_centre + box_radius <= FILM_MIN_REACH) {
+            continue;
+        }
+        double d_front = 0;
+        double d_back = 0;
+        for (auto &side : brush->sides) {
+            for (auto &point : side.w) {
+                const double d = plane.distance_to(point);
+                d_front = std::max(d_front, d);
+                d_back = std::min(d_back, d);
+            }
+        }
+        // which side SplitBrush would give up: reached, but by less than PLANESIDE_EPSILON
+        double sign;
+        if (d_front > FILM_MIN_REACH && d_front < PLANESIDE_EPSILON && d_back <= -PLANESIDE_EPSILON) {
+            sign = 1.0;
+        } else if (d_back < -FILM_MIN_REACH && d_back > -PLANESIDE_EPSILON && d_front >= PLANESIDE_EPSILON) {
+            sign = -1.0;
+        } else {
+            continue;
+        }
+        for (auto &side : brush->sides) {
+            if (!side.onnode || !side.w) {
+                continue;
+            }
+            if (qv::length(qv::cross(side.get_plane().get_normal(), normal)) > FILM_MAX_SINE) {
+                continue;
+            }
+            for (auto &point : side.w) {
+                if (sign * plane.distance_to(point) > FILM_MIN_REACH) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/*
  * Split a bounding box by a plane; The front and back bounds returned
  * are such that they completely contain the portion of the input box
  * on that side of the plane. Therefore, if the split plane is
@@ -984,13 +1070,15 @@ ChooseMidPlaneFromList
 The clipping hull BSP doesn't worry about avoiding splits
 ==================
 */
-static side_t *ChooseMidPlaneFromList(const bspbrush_t::container &brushes, const node_t *node)
+static side_t *ChooseMidPlaneFromList(const bspbrush_t::container &brushes, const node_t *node, bspstats_t &stats)
 {
-    double bestaxialmetric = VECT_MAX;
-    side_t *bestaxialplane = nullptr;
-
-    double bestanymetric = VECT_MAX;
-    side_t *bestanyplane = nullptr;
+    struct mid_candidate_t
+    {
+        double metric;
+        bool axial;
+        side_t *side;
+    };
+    std::vector<mid_candidate_t> candidates;
 
     // the search order goes: (changed from q2 tools - see q2_detail_leak_test.map for the issue
     // with the vanilla q2 tools method):
@@ -1032,30 +1120,31 @@ static side_t *ChooseMidPlaneFromList(const bspbrush_t::container &brushes, cons
 
                 /* calculate the split metric, smaller values are better */
                 const double metric = SplitPlaneMetric(plane, node->bounds);
-
-                if (metric < bestanymetric) {
-                    bestanymetric = metric;
-                    bestanyplane = &side;
-                }
-
-                /* check for axis aligned surfaces */
-                if (plane.get_type() < plane_type_t::PLANE_ANYX) {
-                    if (metric < bestaxialmetric) {
-                        bestaxialmetric = metric;
-                        bestaxialplane = &side;
-                    }
-                }
+                candidates.push_back({metric, plane.get_type() < plane_type_t::PLANE_ANYX, &side});
             }
         }
 
-        // if we found a good plane, don't bother trying any
-        // other passes
-        if (bestaxialplane || bestanyplane)
-            break;
+        // the best axial plane, else the best of any kind, that leaves no brush film out of a sliver
+        // (SplitLeavesBrushFilm); asked in metric order, so usually of one plane only
+        std::stable_sort(candidates.begin(), candidates.end(),
+            [](const mid_candidate_t &a, const mid_candidate_t &b) { return a.metric < b.metric; });
+        for (const bool axial_only : {true, false}) {
+            for (const auto &candidate : candidates) {
+                if (axial_only && !candidate.axial) {
+                    continue;
+                }
+                if (!SplitLeavesBrushFilm(brushes, candidate.side->planenum & ~1)) {
+                    return candidate.side;
+                }
+                stats.c_filmsplits++;
+            }
+        }
+
+        // none in this pass: try the next
+        candidates.clear();
     }
 
-    // prefer the axial split
-    return bestaxialplane ? bestaxialplane : bestanyplane;
+    return nullptr;
 }
 
 /*
@@ -1100,7 +1189,7 @@ static side_t *SelectSplitPlane(
         }
 
         if (split_type == tree_split_t::FAST) {
-            if (auto mid_plane = ChooseMidPlaneFromList(brushes, node)) {
+            if (auto mid_plane = ChooseMidPlaneFromList(brushes, node, stats)) {
                 stats.c_midsplit++;
 
                 for (auto &b : brushes) {
@@ -1200,6 +1289,14 @@ static side_t *SelectSplitPlane(
                 // never split a hint side except with another hint
                 if (hintsplit && !(side.get_texinfo().flags.is_hint()))
                     value = -9999999;
+
+                // a plane that would leave a brush film out of a sliver is never chosen; asked only of a
+                // plane that would otherwise be the best so far, so it costs one pass over the brushes per
+                // improvement instead of one per candidate
+                if (value > bestvalue && SplitLeavesBrushFilm(brushes, positive_planenum)) {
+                    stats.c_filmsplits++;
+                    continue;
+                }
 
                 // save off the side test so we don't need
                 // to recalculate it when we actually seperate
