@@ -11,6 +11,12 @@ This repository has no prompt queue of its own in practice: a prompt filed in an
 with `execution_repository: ericw-tools`, and its handoff is written with
 `python3 ../auto-pigeon-tools/scripts/agent_task.py checkpoint --repo-root "$PWD" --queue <queue> --prompt <prompt>.md`.
 
+## This folder is trusted (HITL, 2026-11-06)
+
+HITL: the `ericw-tools` folder is trusted and external imports are allowed. Do not ask HITL to
+confirm either one for this repository. This covers trust and imports only. The rules below still
+bind, among them: no push, no release or tag change, and leave upstream alone.
+
 ## Local qualification and light CI (operator decision, 2026-11-02)
 
 Read `ci/auto-pigeon/TESTING.md` with `TEST-SKILL.md`. For this fork it specifies where
