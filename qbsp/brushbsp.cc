@@ -171,16 +171,34 @@ double BrushVolume(const bspbrush_t &brush)
 BoxOnPlaneSide
 
 Returns PSIDE_FRONT, PSIDE_BACK, or PSIDE_BOTH
+
+A brush this calls one-sided goes to that child whole and SplitBrush never sees it, while the node
+volume itself is always cut by SplitBrush. So whenever SplitBrush would split a brush, this must say
+PSIDE_BOTH: it must reach the same answer on the same numbers. SplitBrush splits when a point is
+`distance_to` >= PLANESIDE_EPSILON past the plane on both sides; the axial test below therefore
+measures `distance_to` of the box's extremes too, and compares the same way.
+
+Comparing a coordinate against `dist +/- PLANESIDE_EPSILON` instead (as qbsp3 did) rounds that sum:
+for a brush ending at z = 16 and a split at z = 16.001, `16.001 - 0.001` rounds to 16, so the brush
+was "front only", while SplitBrush measured 16 - 16.001 = -0.0010000000000012 and cut the node
+volume. The 0.001-thick child between the two planes got the volume but none of the brushes that
+crossed it: an EMPTY film through a solid wall, and the outside flood leaked through it (NEW_396:
+two slabs exactly PLANESIDE_EPSILON apart in a sealed room; testmapsQ1.exactEpsilonSlitSeals).
 ==============
 */
 static int BoxOnPlaneSide(const aabb3d &bounds, const qbsp_plane_t &plane)
 {
     // axial planes are easy
     if (plane.get_type() < plane_type_t::PLANE_ANYX) {
+        const int axis = static_cast<int>(plane.get_type());
+        // the normal is +/- the axis, so qv::dot(point, normal) is exactly +/- the coordinate
+        const bool positive = plane.get_normal()[axis] > 0;
+        const double front = (positive ? bounds.maxs()[axis] : -bounds.mins()[axis]) - plane.get_dist();
+        const double back = (positive ? bounds.mins()[axis] : -bounds.maxs()[axis]) - plane.get_dist();
         int side = 0;
-        if (bounds.maxs()[static_cast<int>(plane.get_type())] > plane.get_dist() + PLANESIDE_EPSILON)
+        if (front >= PLANESIDE_EPSILON)
             side |= PSIDE_FRONT;
-        if (bounds.mins()[static_cast<int>(plane.get_type())] < plane.get_dist() - PLANESIDE_EPSILON)
+        if (back <= -PLANESIDE_EPSILON)
             side |= PSIDE_BACK;
         return side;
     }

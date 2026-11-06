@@ -148,8 +148,26 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   winding and no bogus brush; seed 1044, a real hairline opening, still leaks. `testmapsQ1.coincidentFacesKeepTheirBrush`
   (a pillar whose top is written three times: on 1.4549 the whole pillar is EMPTY; copies, tilts, offsets, mirrored,
   moved and turned, and two controls that were already right).
+- A brush that `SplitBrush` would split is never handed whole to one side. `BoxOnPlaneSide` decides which brushes of a
+  node go to one child unsplit, while the node volume itself is always cut by `SplitBrush`. Its axial test compared a
+  coordinate with `dist - PLANESIDE_EPSILON`, and that sum rounds. For a wall fragment ending at z = 16 and a split at
+  z = 16.001, it said "front only" (16 < 16 is false), while `SplitBrush` measured 16 - 16.001 = -0.0010000000000012
+  and cut the volume. The 0.001-thick child between the two planes got the volume but none of the walls crossing it: an
+  EMPTY film through solid. Two slabs exactly 0.001 apart in a sealed room (NEW_381D's witness) leaked through the room's
+  wall at the slit's height, with and without `-forcegoodtree`, on every release up to 1.4552; 0.0009 and 0.00101
+  sealed. The axial test now measures the box's extremes with the same `distance_to` arithmetic and the same `>=`
+  boundary as `SplitBrush`. The non-axial test already agreed with it. Away from that last-bit boundary every answer is
+  the one it was. `testmapsQ1.exactEpsilonSlitSeals` (`testmaps/q1_exact_epsilon_slit.map`, the witness byte for byte,
+  also written by the test's own `SlitMapText`), `exactEpsilonSlitLadder` (0.0009 / 0.001 / 0.00101; the slit's normal
+  along each axis, moved, mirrored, swapped, turned; both tree modes), `exactEpsilonSlitRealOpeningStillLeaks`.
 
 #### Known limits
+
+- **Air between two slabs closer than 0.2 units (`EDGE_LENGTH_EPSILON`) can read SOLID in hull 0.** The room seals and
+  the slabs and walls are right, but the slit between them is not kept as air. Measured on NEW_381D's witness: exactly
+  0.001 (after the item above), 0.0009 and 0.00101 all read SOLID mid-slit in hulls 0-2. NEW_381D also read a
+  horizontal 0.0025 or 0.05 slit SOLID in hull 0 and the same slit stacked along y EMPTY. The slit tests assert the
+  slabs, the walls and the room's air, and do not assert the slit.
 
 - **A whole brush thinner than 0.001 units (`PLANESIDE_EPSILON`) is dropped.** It does not reach past its own far plane,
   so it is never cut out of its node, and `LeafNode`'s leaf-in-brush rule leaves it out: no material, and no solid in the

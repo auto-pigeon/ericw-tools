@@ -4897,3 +4897,268 @@ TEST(testmapsQ1, coincidentFacesKeepTheirBrush)
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Two slabs exactly PLANESIDE_EPSILON apart (NEW_396). SplitBrush cuts the node volume when the plane is reached by
+// PLANESIDE_EPSILON or more on both sides, but a brush BoxOnPlaneSide calls one-sided is handed to that child whole and
+// never reaches SplitBrush. BoxOnPlaneSide's axial test compared a coordinate with `dist - PLANESIDE_EPSILON`, a sum
+// that rounds: for a wall fragment ending at z = 16 and a split at z = 16.001 it said "front only" (16 < 16 is false),
+// while SplitBrush measured 16 - 16.001 = -0.0010000000000012 and cut the volume. The 0.001-thick child between the
+// slabs' planes got the volume and none of the walls that cross it: an EMPTY film through the room's walls, and the
+// outside flood leaked through it. 0.0009 (nobody splits) and 0.00101 (everybody splits) were consistent and sealed.
+// Every expectation below is read off the source: the room is sealed, so it must seal; the walls and slabs are solid.
+// The slit itself is source air thinner than EDGE_LENGTH_EPSILON: README's thin-leaf known limit, not asserted here.
+// ---------------------------------------------------------------------------------------------
+
+struct slit_params_t
+{
+    int64_t gap_um = 1000; // the slit's width, millionths of a unit (so the map text is the exact decimal)
+    char axis = 'z'; // the slit's normal: the slabs' z axis is written along this world axis
+    std::array<int64_t, 3> offset_um{0, 0, 0}; // the slabs moved by this, millionths of a unit
+    bool mirror = false; // the slabs mirrored along the slit's normal
+    bool swap = false; // slab B written before slab A
+    double yaw = 0; // the slabs turned about the world z axis through the origin, degrees
+    bool open = false; // a real 32 x 32 hole through the +y wall, at x, z in [-16, 16]
+};
+
+// the world axis the slabs' own axis `i` is written along (axis 'y' and 'x' swap two axes: a reflection)
+static int SlitWorldAxis(const slit_params_t &p, int i)
+{
+    static constexpr int perm_z[3] = {0, 1, 2}, perm_y[3] = {0, 2, 1}, perm_x[3] = {2, 1, 0};
+    return (p.axis == 'z' ? perm_z : p.axis == 'y' ? perm_y : perm_x)[i];
+}
+
+// a point of the slabs' frame (millionths) in the world, as the map text writes it
+static qvec3d SlitPoint(const slit_params_t &p, const std::array<int64_t, 3> &slab)
+{
+    std::array<int64_t, 3> w{};
+    for (int i = 0; i < 3; i++) {
+        w[SlitWorldAxis(p, i)] = slab[i];
+    }
+    if (p.mirror) {
+        w[SlitWorldAxis(p, 2)] = -w[SlitWorldAxis(p, 2)];
+    }
+    // an integer number of millionths divided by 1e6 is the double nearest the decimal, as the map loader reads it
+    qvec3d q{w[0] / 1e6, w[1] / 1e6, w[2] / 1e6};
+    if (p.yaw != 0) {
+        const double a = p.yaw * Q_PI / 180.0;
+        q = {q[0] * cos(a) - q[1] * sin(a), q[0] * sin(a) + q[1] * cos(a), q[2]};
+    }
+    for (int i = 0; i < 3; i++) {
+        q[i] = (p.yaw != 0 ? q[i] + p.offset_um[i] / 1e6 : (w[i] + p.offset_um[i]) / 1e6) + 0.0;
+    }
+    return q;
+}
+
+// a point of the slabs' frame given in units, for probing
+static qvec3d SlitProbe(const slit_params_t &p, const qvec3d &slab)
+{
+    return SlitPoint(p, {std::llround(slab[0] * 1e6), std::llround(slab[1] * 1e6), std::llround(slab[2] * 1e6)});
+}
+
+static std::string SlitMapText(const slit_params_t &p)
+{
+    using box_t = std::array<std::array<int64_t, 3>, 2>;
+    constexpr int64_t U = 1000000;
+    // the face order and points of NEW_381D's generator: +z, -z, +y, -y, +x, -x, three corners each
+    auto faces = [](const std::array<int64_t, 3> &lo, const std::array<int64_t, 3> &hi) {
+        const int64_t x0 = lo[0], y0 = lo[1], z0 = lo[2], x1 = hi[0], y1 = hi[1], z1 = hi[2];
+        using pt = std::array<int64_t, 3>;
+        return std::array<std::array<pt, 3>, 6>{{{{{x1, y1, z1}, {x1, y0, z1}, {x0, y0, z1}}},
+            {{{x1, y0, z0}, {x1, y1, z0}, {x0, y1, z0}}}, {{{x1, y1, z0}, {x1, y1, z1}, {x0, y1, z1}}},
+            {{{x0, y0, z0}, {x0, y0, z1}, {x1, y0, z1}}}, {{{x1, y0, z0}, {x1, y0, z1}, {x1, y1, z1}}},
+            {{{x0, y1, z0}, {x0, y1, z1}, {x0, y0, z1}}}}};
+    };
+    std::vector<box_t> walls{{{{-464 * U, -464 * U, -464 * U}, {-448 * U, 464 * U, 464 * U}}},
+        {{{448 * U, -464 * U, -464 * U}, {464 * U, 464 * U, 464 * U}}},
+        {{{-464 * U, -464 * U, -464 * U}, {464 * U, -448 * U, 464 * U}}}, box_t{}, // +y, below
+        {{{-464 * U, -464 * U, -464 * U}, {464 * U, 464 * U, -448 * U}}},
+        {{{-464 * U, -464 * U, 448 * U}, {464 * U, 464 * U, 464 * U}}}};
+    if (!p.open) {
+        walls[3] = {{{-464 * U, 448 * U, -464 * U}, {464 * U, 464 * U, 464 * U}}};
+    } else {
+        walls.erase(walls.begin() + 3);
+        walls.push_back({{{-464 * U, 448 * U, -464 * U}, {-16 * U, 464 * U, 464 * U}}});
+        walls.push_back({{{16 * U, 448 * U, -464 * U}, {464 * U, 464 * U, 464 * U}}});
+        walls.push_back({{{-16 * U, 448 * U, -464 * U}, {16 * U, 464 * U, -16 * U}}});
+        walls.push_back({{{-16 * U, 448 * U, 16 * U}, {16 * U, 464 * U, 464 * U}}});
+    }
+    auto num = [](double v) { return fmt::format("{}", v + 0.0); };
+    auto face_line = [&](const std::array<qvec3d, 3> &f) {
+        std::string s = "   ";
+        for (const auto &q : f) {
+            s += fmt::format(" ( {} {} {} )", num(q[0]), num(q[1]), num(q[2]));
+        }
+        return s + " wall 0 0 0 1 1\n";
+    };
+    std::string text = "// entity 0\n{\n  \"classname\" \"worldspawn\"\n";
+    int n = 0;
+    for (const auto &w : walls) {
+        text += fmt::format("  // brush {}\n  {{\n", n++);
+        for (const auto &f : faces(w[0], w[1])) {
+            std::array<qvec3d, 3> q;
+            for (int i = 0; i < 3; i++) {
+                q[i] = {f[i][0] / 1e6, f[i][1] / 1e6, f[i][2] / 1e6};
+            }
+            text += face_line(q);
+        }
+        text += "  }\n";
+    }
+    const box_t a{{{0, 0, 0}, {192 * U, 64 * U, 16 * U}}};
+    const box_t b{{{0, 0, 16 * U + p.gap_um}, {192 * U, 64 * U, 32 * U + p.gap_um}}};
+    // a reflection turns the faces inside out unless their points are written in the other order
+    const bool reflected = p.mirror != (p.axis != 'z');
+    for (const box_t &slab : p.swap ? std::vector<box_t>{b, a} : std::vector<box_t>{a, b}) {
+        text += fmt::format("  // brush {}\n  {{\n", n++);
+        for (const auto &f : faces(slab[0], slab[1])) {
+            std::array<qvec3d, 3> q{SlitPoint(p, f[0]), SlitPoint(p, f[1]), SlitPoint(p, f[2])};
+            if (reflected) {
+                std::swap(q[0], q[2]);
+            }
+            text += face_line(q);
+        }
+        text += "  }\n";
+    }
+    text += "}\n{\n\"classname\" \"info_player_start\"\n\"origin\" \"380 380 380\"\n}\n";
+    return text;
+}
+
+static void SlitCheck(const slit_params_t &p, const mbsp_t &bsp, const std::optional<prtfile_t> &prt)
+{
+    // sealed: -leaktest did not throw, and the portal file is this compile's own
+    ASSERT_TRUE(prt.has_value());
+    EXPECT_FALSE(prt->portals.empty());
+    ASSERT_FALSE(bsp.dclipnodes.empty());
+
+    const double g = p.gap_um / 1e6;
+    // the room's air: the player, and air at the slit's height away from the slabs, in every hull
+    const int k = SlitWorldAxis(p, 2);
+    const double slit = SlitProbe(p, {96, 32, 16 + g / 2})[k];
+    std::vector<qvec3d> air{{380, 380, 380}};
+    {
+        qvec3d q{-300, -300, -300};
+        q[k] = slit;
+        air.push_back(q);
+    }
+    for (const qvec3d &q : air) {
+        for (int hullnum = 0; hullnum < 3; hullnum++) {
+            SCOPED_TRACE(fmt::format("room air {} hull {}", q, hullnum));
+            EXPECT_EQ(CONTENTS_EMPTY, Sub002Contents(bsp, hullnum, q));
+        }
+    }
+    // the slabs are solid (their middles are 8 units from any face)
+    for (const qvec3d &q : {SlitProbe(p, {96, 32, 8}), SlitProbe(p, {96, 32, 24 + g}), SlitProbe(p, {20, 10, 2}),
+             SlitProbe(p, {180, 60, 30 + g})}) {
+        SCOPED_TRACE(fmt::format("slab {}", q));
+        EXPECT_EQ(CONTENTS_SOLID, Sub002Contents(bsp, 0, q));
+    }
+    // the four walls the slit's planes cross are solid at the slit's height, in every hull: where the flood went through
+    int wall_points = 0;
+    for (int a = 0; a < 3; a++) {
+        if (a == k) {
+            continue;
+        }
+        const int c = 3 - a - k;
+        for (const double side : {-456.0, 456.0}) {
+            for (const double along : {-400.0, -200.0, 0.0, 96.0, 224.0, 400.0}) {
+                qvec3d q;
+                q[a] = side;
+                q[k] = slit;
+                q[c] = along;
+                if (p.open && a == 1 && side > 0 && fabs(q[0]) < 16.5 && fabs(q[2]) < 16.5) {
+                    continue; // the hole
+                }
+                wall_points++;
+                for (int hullnum = 0; hullnum < 3; hullnum++) {
+                    SCOPED_TRACE(fmt::format("wall {} hull {}", q, hullnum));
+                    EXPECT_EQ(CONTENTS_SOLID, Sub002Contents(bsp, hullnum, q));
+                }
+            }
+        }
+    }
+    EXPECT_GE(wall_points, 23);
+}
+
+static std::vector<std::pair<std::string, slit_params_t>> SlitArrangements()
+{
+    std::vector<std::pair<std::string, slit_params_t>> v;
+    auto add = [&](const std::string &name, auto &&change) {
+        slit_params_t p;
+        change(p);
+        v.emplace_back(name, p);
+    };
+    add("axial", [](slit_params_t &) {});
+    add("normal_y", [](slit_params_t &p) { p.axis = 'y'; });
+    add("normal_x", [](slit_params_t &p) { p.axis = 'x'; });
+    add("moved", [](slit_params_t &p) { p.offset_um = {3500000, -7250000, 1125000}; });
+    add("moved_far", [](slit_params_t &p) { p.offset_um = {-100250000, 37000000, -200500000}; });
+    add("mirrored", [](slit_params_t &p) { p.mirror = true; });
+    add("swapped", [](slit_params_t &p) { p.swap = true; });
+    add("turned_30", [](slit_params_t &p) { p.yaw = 30; });
+    return v;
+}
+
+TEST(testmapsQ1, exactEpsilonSlitSeals)
+{
+    // the committed map is NEW_381D's witness, and this generator's text: release 1.4552 leaks through the +y wall
+    {
+        std::ifstream file(std::filesystem::path(testmaps_dir) / "q1_exact_epsilon_slit.map", std::ios::binary);
+        ASSERT_TRUE(file.good());
+        std::string committed((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        std::erase(committed, '\r');
+        ASSERT_EQ(0u, committed.rfind("// NEW_396", 0)) << "the map starts with its comment";
+        committed.erase(0, committed.find("// entity 0"));
+        EXPECT_EQ(SlitMapText({}), committed);
+    }
+    for (const auto &extra_args : sub002_tree_modes) {
+        SCOPED_TRACE(extra_args.back());
+        std::filesystem::remove(std::filesystem::path(testmaps_dir) / "q1_exact_epsilon_slit.prt");
+        const auto [bsp, bspx, prt] = LoadTestmapQ1("q1_exact_epsilon_slit.map", extra_args);
+        SlitCheck({}, bsp, prt);
+    }
+}
+
+TEST(testmapsQ1, exactEpsilonSlitLadder)
+{
+    // 0.0009 and 0.00101 on either side of the tolerance, and exactly 0.001, with the slabs' normal along each axis,
+    // moved, mirrored, written in the other order and turned: every room is sealed and must seal, in both tree modes.
+    // On release 1.4552's sources all 16 compiles at exactly 0.001 leak; the 32 beside it seal there too.
+    for (const int64_t gap : {900, 1000, 1010}) {
+        for (auto [name, p] : SlitArrangements()) {
+            p.gap_um = gap;
+            for (const auto &extra_args : sub002_tree_modes) {
+                SCOPED_TRACE(fmt::format("gap {} {} {}", gap / 1e6, name, extra_args.back()));
+                std::optional<std::tuple<mbsp_t, bspxentries_t, std::optional<prtfile_t>>> compiled;
+                try {
+                    compiled = Sub002Compile("slit_" + name, SlitMapText(p), extra_args);
+                } catch (const std::exception &e) {
+                    ADD_FAILURE() << "the sealed room leaks: " << e.what();
+                    continue;
+                }
+                SlitCheck(p, std::get<0>(*compiled), std::get<2>(*compiled));
+            }
+        }
+    }
+}
+
+TEST(testmapsQ1, exactEpsilonSlitRealOpeningStillLeaks)
+{
+    // the other direction: the same rooms with a real 32 x 32 hole through the +y wall must leak, in both tree modes,
+    // at exactly 0.001 and beside it, and get no portal file. Making the box test agree with SplitBrush seals nothing.
+    for (const int64_t gap : {900, 1000, 1010}) {
+        for (auto [name, p] : SlitArrangements()) {
+            p.gap_um = gap;
+            p.open = true;
+            for (const auto &extra_args : sub002_tree_modes) {
+                SCOPED_TRACE(fmt::format("gap {} {} {}", gap / 1e6, name, extra_args.back()));
+                const auto paths = Sub002Paths("slit_open_" + name);
+                std::ofstream(paths.map) << SlitMapText(p);
+                auto compile = [&]() { LoadTestmap(paths.map, paths.bsp, extra_args); };
+                EXPECT_THAT(compile,
+                    testing::ThrowsMessage<std::exception>(testing::HasSubstr("Aborting because -leaktest was used.")));
+                EXPECT_FALSE(std::filesystem::exists(paths.prt));
+                EXPECT_TRUE(std::filesystem::exists(paths.pts));
+            }
+        }
+    }
+}
