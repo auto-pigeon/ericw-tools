@@ -96,11 +96,16 @@ static void ClipToSeparators(visstats_t &stats, const viswinding_t *source, cons
             }
 
             /* Cache separating planes for tests 0, 1 */
-            if (test < 2) {
-                if (stack.numseparators[test] == MAX_SEPARATORS)
-                    FError("MAX_SEPARATORS");
-                stack.separators[test][stack.numseparators[test]] = sep;
-                stack.numseparators[test]++;
+            if (test < 2 && !stack.separators_uncached[test]) {
+                if (stack.numseparators[test] == MAX_SEPARATORS) {
+                    // a source over MAX_SEPARATORS edges (NEW_425): drop the partial cache, so VisTests runs this
+                    // search again for every target rather than clip by part of the separators
+                    stack.numseparators[test] = 0;
+                    stack.separators_uncached[test] = true;
+                } else {
+                    stack.separators[test][stack.numseparators[test]] = sep;
+                    stack.numseparators[test]++;
+                }
             }
 
             target = ClipStackWinding(stats, target, stack, sep);
@@ -215,6 +220,8 @@ static unsigned TargetChecks(visstats_t &stats, const pstack_t *const head, cons
     stack.portal = NULL;
     stack.numseparators[0] = 0;
     stack.numseparators[1] = 0;
+    stack.separators_uncached[0] = false;
+    stack.separators_uncached[1] = false;
 
     for (i = 0; i < STACK_WINDINGS; i++)
         stack.windings_used[i] = false;
@@ -392,6 +399,8 @@ static void RecursiveLeafFlow(int leafnum, threaddata_t *thread, pstack_t &prevs
     stack.portal = nullptr;
     stack.numseparators[0] = 0;
     stack.numseparators[1] = 0;
+    stack.separators_uncached[0] = false;
+    stack.separators_uncached[1] = false;
 
     for (int i = 0; i < STACK_WINDINGS; i++)
         stack.windings_used[i] = false;

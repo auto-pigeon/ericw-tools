@@ -1,11 +1,16 @@
 #include <common/bsputils.hh>
 #include <common/qvec.hh>
 
+#include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
+#include <common/prtfile.hh>
 #include <vis/vis.hh>
 
 #include "test_qbsp.hh"
 #include <gtest/gtest.h>
+#include <gmock/gmock.h>
 
 static bool q2_leaf_sees(
     const mbsp_t &bsp, const std::unordered_map<int, std::vector<uint8_t>> &vis, const mleaf_t *a, const mleaf_t *b)
@@ -181,6 +186,34 @@ TEST(vis, ClipStackWinding)
     EXPECT_EQ((*w1)[3], qvec3d(0, 0, -32));
 
     FreeStackWinding(w1, stack);
+}
+
+TEST(vis, portalPointLimit)
+{
+    // NEW_425: LoadPrtFile and vis's clipper share one limit, and it reads a 326-point portal and refuses a 327-point
+    // one by name. Upstream's 64 stopped a legal fan of 64 planes through one axis (testmapsQ1.visFanPortalOver64Points).
+    static_assert(MAX_WINDING == PRT_MAX_WINDING);
+    EXPECT_EQ(326u, PRT_MAX_WINDING);
+    EXPECT_EQ(64u, MAX_SEPARATORS) << "the per-level separator cache keeps upstream's size";
+
+    const auto write = [](size_t points) {
+        const auto path = std::filesystem::temp_directory_path() / fmt::format("ericw_portal_{}_points.prt", points);
+        std::ofstream f(path);
+        f << "PRT1\n2\n1\n" << points << " 0 1";
+        for (size_t i = 0; i < points; i++) {
+            const double a = 2 * Q_PI * i / points;
+            f << fmt::format(" ({} {} 0)", 256 * std::cos(a), 256 * std::sin(a));
+        }
+        f << "\n";
+        return path;
+    };
+    const auto read = LoadPrtFile(write(PRT_MAX_WINDING), &bspver_q1);
+    ASSERT_EQ(1u, read.portals.size());
+    EXPECT_EQ(PRT_MAX_WINDING, read.portals[0].winding.size());
+
+    const auto over = write(PRT_MAX_WINDING + 1);
+    EXPECT_THAT([&]() { LoadPrtFile(over, &bspver_q1); },
+        testing::ThrowsMessage<std::exception>(testing::HasSubstr("portal 0 has too many points (327 > 326)")));
 }
 
 TEST(vis, q1NoambientFuncGroup)

@@ -30,7 +30,7 @@ constexpr double VIS_ON_EPSILON = 0.1;
 constexpr double VIS_EQUAL_EPSILON = 0.001;
 
 constexpr size_t MAX_WINDING_FIXED = 24;
-constexpr size_t MAX_WINDING = 64;
+constexpr size_t MAX_WINDING = PRT_MAX_WINDING; // one limit for the loader and the clipper (NEW_425)
 
 enum pstatus_t
 {
@@ -153,7 +153,14 @@ struct leaf_t
     std::vector<visportal_t *> portals;
 };
 
-constexpr size_t MAX_SEPARATORS = MAX_WINDING;
+/*
+ * The separator cache holds one plane per edge of a source winding. It stays at upstream's 64 although a portal may
+ * now have up to MAX_WINDING points (NEW_425): a pstack_t lives on the stack once per level of RecursiveLeafFlow, and
+ * sizing it by MAX_WINDING takes that frame from 6,272 bytes to 23,040 (gcc 13 -O3). A source with more edges than the
+ * cache holds is not cached: the stack frame sets separators_uncached and VisTests finds the separators again for every
+ * target, which is the uncached computation itself. Every portal of 64 points or fewer fills the cache as before.
+ */
+constexpr size_t MAX_SEPARATORS = 64;
 constexpr size_t STACK_WINDINGS = 3; // source, pass and a temp for clipping
 
 struct pstack_t
@@ -168,6 +175,7 @@ struct pstack_t
     leafbits_t *mightsee; // bit string
     qplane3d separators[2][MAX_SEPARATORS]; /* Separator cache */
     int numseparators[2];
+    bool separators_uncached[2]; // the source had more edges than MAX_SEPARATORS; never cache for this frame
     char did_targetchecks;
     unsigned num_expected_targetchecks;
 };

@@ -160,8 +160,22 @@ It follows upstream `main` and adds these compiler changes, which upstream has n
   the one it was. `testmapsQ1.exactEpsilonSlitSeals` (`testmaps/q1_exact_epsilon_slit.map`, the witness byte for byte,
   also written by the test's own `SlitMapText`), `exactEpsilonSlitLadder` (0.0009 / 0.001 / 0.00101; the slit's normal
   along each axis, moved, mirrored, swapped, turned; both tree modes), `exactEpsilonSlitRealOpeningStillLeaks`.
+- `vis` reads and floods a portal of up to **326** points; upstream stops at 64. N cell boundaries through one axis (a
+  bent corridor, a half-annulus written from trigonometry alone) cut one portal into N + 1 points, so a legal fan of 64
+  planes was refused with `LoadPrtFile: portal N has too many points`. The loader (`PRT_MAX_WINDING`) and the clipper
+  (`MAX_WINDING`) now share one constant. 326 is 1.5 times the 217-point portal of the 216-cell bend, and it keeps
+  `ClipStackWinding`'s per-point arrays inside one 4 KiB stack page (928 bytes at 64, 4,064 at 326, no stack probe). The
+  per-level separator cache keeps upstream's 64 entries, so the recursive stack frame does not grow; a source with more
+  edges is not cached and its separators are found again for each target. Every portal file whose portals fit in 64
+  points gets the same PVS as before. `testmapsQ1.visFanPortalOver64Points` (`testmaps/q1_vis_fan_97_point_portal.map`:
+  two stacked 96-wedge half-annuli, four 97-point portals, checked against straight sight lines through the room's
+  air), `vis.portalPointLimit` (326 read, 327 refused by name).
 
 #### Known limits
+
+- **A portal over 326 points is refused, and stock `vis` refuses one over 64.** A fan of more than 325 planes through one
+  axis still stops `vis` (`portal N has too many points (327 > 326)`). A map compiled by upstream ericw-tools or any
+  other stock `vis` stops at 64 points, so a fan of 64 planes or more works only with this fork.
 
 - **Air between two slabs closer than 0.2 units (`EDGE_LENGTH_EPSILON`) can read SOLID in hull 0.** The room seals and
   the slabs and walls are right, but the slit between them is not kept as air. Measured on NEW_381D's witness: exactly

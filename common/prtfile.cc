@@ -31,8 +31,6 @@ constexpr const char *PORTALFILE = "PRT1";
 constexpr const char *PORTALFILE2 = "PRT2";
 constexpr const char *PORTALFILEAM = "PRT1-AM";
 
-constexpr size_t PRT_MAX_WINDING = 64;
-
 prtfile_t LoadPrtFile(const fs::path &name, const bspversion_t *loadversion)
 {
     std::ifstream f(name);
@@ -89,7 +87,7 @@ prtfile_t LoadPrtFile(const fs::path &name, const bspversion_t *loadversion)
         if (f.bad())
             FError("reading portal {}", i);
         if (numpoints > PRT_MAX_WINDING)
-            FError("portal {} has too many points", i);
+            FError("portal {} has too many points ({} > {})", i, numpoints, PRT_MAX_WINDING);
         if ((unsigned)p.leafnums[0] > (unsigned)result.portalleafs ||
             (unsigned)p.leafnums[1] > (unsigned)result.portalleafs)
             FError("out of bounds leaf in portal {}", i);

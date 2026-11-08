@@ -5162,3 +5162,73 @@ TEST(testmapsQ1, exactEpsilonSlitRealOpeningStillLeaks)
         }
     }
 }
+
+TEST(testmapsQ1, visFanPortalOver64Points)
+{
+    // NEW_425: DESIGN 150's ideal control. 96 wedge boundaries through one axis cut a portal into 97 points; the
+    // geometry is legal, and vis used to refuse the portal file ("portal 25 has too many points", limit 64). Two such
+    // fans are stacked so two 97-point portals face each other and the separator search outgrows its cache.
+    const auto [qbsp_bsp, qbsp_bspx, prt] = LoadTestmapQ1("q1_vis_fan_97_point_portal.map");
+    ASSERT_TRUE(prt);
+    size_t widest = 0;
+    for (const auto &portal : prt->portals) {
+        widest = std::max(widest, portal.winding.size());
+    }
+    EXPECT_EQ(97u, widest) << "the pencil of 96 planes writes portals of 96 + 1 points";
+    EXPECT_EQ(4, std::count_if(prt->portals.begin(), prt->portals.end(),
+                     [](const prtfile_portal_t &portal) { return portal.winding.size() == 97; }))
+        << "over and under each half-disc";
+    ASSERT_GT(widest, 64u) << "the map must exercise the old limit";
+
+    // the full flood, not -fast: ClipStackWinding and the separator search see the 97-point winding
+    const auto [bsp, bspx, lit] = QbspVisLight_Q1("q1_vis_fan_97_point_portal.map", {}, runvis_t::yes);
+    ASSERT_FALSE(bsp.dvis.bits.empty());
+    const auto vis = DecompressAllVis(&bsp);
+
+    // The oracle is the room, not the compiler: two air points joined by a straight segment that crosses no solid
+    // are in leaves that see each other. A visibility change may add visible leaves, never lose one.
+    std::vector<qvec3d> points;
+    for (double x = -608; x < 0; x += 96) {
+        for (double y = -128; y < 816; y += 96) {
+            for (double z : {16.0, 64.0, 112.0, 160.0, 208.0}) {
+                if (BSP_FindLeafAtPoint(&bsp, &bsp.dmodels[0], {x, y, z})->contents == CONTENTS_EMPTY) {
+                    points.emplace_back(x, y, z);
+                }
+            }
+        }
+    }
+    ASSERT_GT(points.size(), 250u);
+    auto clear = [&](const qvec3d &a, const qvec3d &b) {
+        const int steps = static_cast<int>(qv::length(b - a) / 2.0) + 1;
+        for (int i = 1; i < steps; i++) {
+            const qvec3d p = a + (b - a) * (static_cast<double>(i) / steps);
+            if (BSP_FindLeafAtPoint(&bsp, &bsp.dmodels[0], p)->contents != CONTENTS_EMPTY) {
+                return false;
+            }
+        }
+        return true;
+    };
+    size_t clear_pairs = 0, clear_over_the_fan = 0;
+    for (size_t i = 0; i < points.size(); i++) {
+        const mleaf_t *a = BSP_FindLeafAtPoint(&bsp, &bsp.dmodels[0], points[i]);
+        for (size_t j = i + 1; j < points.size(); j++) {
+            const mleaf_t *b = BSP_FindLeafAtPoint(&bsp, &bsp.dmodels[0], points[j]);
+            if (a == b || !clear(points[i], points[j])) {
+                continue;
+            }
+            clear_pairs++;
+            // inside the half-annulus (radius < 293) and outside it (radius > 358), around its axis (-512, 1024/pi)
+            const auto radius = [](const qvec3d &p) { return qv::length(qvec2d(p[0] + 512, p[1] - 1024 / Q_PI)); };
+            if ((radius(points[i]) < 293 && radius(points[j]) > 358) ||
+                (radius(points[j]) < 293 && radius(points[i]) > 358)) {
+                clear_over_the_fan++;
+            }
+            EXPECT_TRUE(Pvs_LeafVisible(&bsp, vis.at(a->visofs), b))
+                << points[i] << " and " << points[j] << " see each other through air";
+            EXPECT_TRUE(Pvs_LeafVisible(&bsp, vis.at(b->visofs), a))
+                << points[j] << " and " << points[i] << " see each other through air";
+        }
+    }
+    EXPECT_GT(clear_pairs, 1000u);
+    EXPECT_GT(clear_over_the_fan, 0u) << "some sight lines cross the fan's wide portal";
+}

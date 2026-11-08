@@ -26,6 +26,18 @@
 
 constexpr size_t PRT_MAX_WINDING_FIXED = 24;
 
+/**
+ * The most points one portal winding may have, for LoadPrtFile and for vis's own clipping (vis.hh's MAX_WINDING is
+ * this constant, so the two cannot disagree again).
+ *
+ * Auto-Pigeon fork, NEW_425: upstream's 64 refuses a legal fan. N cell boundaries through one axis (a bent corridor,
+ * a half-annulus written from trigonometry alone) cut one portal into N + 1 points, so 64 stops a fan at 63 planes;
+ * the 216-cell bend a mapper can build writes a 217-point portal. 326 is 1.5 times that 217, and it keeps
+ * ClipStackWinding's two per-point arrays inside one 4 KiB stack page, so the hot clipping path gains no stack probe.
+ * Stock ericw-tools and upstream vis still refuse a portal over 64 points.
+ */
+constexpr size_t PRT_MAX_WINDING = 326;
+
 using prtfile_winding_storage_t = polylib::winding_storage_hybrid_t<double, PRT_MAX_WINDING_FIXED>;
 using prtfile_winding_t = polylib::winding_base_t<prtfile_winding_storage_t>;
 
